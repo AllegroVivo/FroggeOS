@@ -1,0 +1,93 @@
+// The VGA text screen. Consists of 80 x 25 cells at 0xB8000. Each cell
+// is a u16 - low bytes is the character, high byte is the color.
+
+use core::fmt;
+
+const BUFFER_ADDR: usize = 0xB8000;
+const WIDTH: usize = 80;
+const HEIGHT: usize = 25;
+const WHITE_ON_BLACK: u16 = 0x0F00;
+
+fn write_cell(row: usize, col: usize, value: u16) {
+    assert!(row < HEIGHT && col < WIDTH);
+    let buffer = BUFFER_ADDR as *mut u16;
+    unsafe { buffer.add(row * WIDTH + col).write_volatile(value) }
+}
+
+fn read_cell(row: usize, col: usize) -> u16 {
+    assert!(row < HEIGHT && col < WIDTH);
+    let buffer = BUFFER_ADDR as *const u16;
+    unsafe { buffer.add(row * WIDTH + col).read_volatile() }
+}
+
+pub struct Writer {
+    row: usize,
+    col: usize,
+}
+
+impl Writer {
+    pub fn new() -> Writer {
+        let mut writer = Writer { row: 0, col: 0 };
+        writer.clear();
+        writer
+    }
+
+    pub fn clear(&mut self) {
+        for row in 0..HEIGHT {
+            clear_row(row);
+        }
+        self.row = 0;
+        self.col = 0;
+    }
+
+    pub fn write_byte(&mut self, byte: u8) {
+        if byte == b'\n' {
+            self.new_line();
+            return;
+        }
+        if self.col == WIDTH {
+            self.new_line();
+        }
+        write_cell(self.row, self.col, WHITE_ON_BLACK | byte as u16);
+        self.col += 1;
+    }
+
+    fn new_line(&mut self) {
+        self.col = 0;
+        if self.row < HEIGHT - 1 {
+            self.row += 1;
+        } else {
+            scroll_up();
+        }
+    }
+}
+
+fn clear_row(row: usize) {
+    for col in 0..WIDTH {
+        write_cell(row, col, WHITE_ON_BLACK | b' ' as u16);
+    }
+}
+
+// Move every row up by one and blank the bottom row.
+fn scroll_up() {
+    for row in 1..HEIGHT {
+        for col in 0..WIDTH {
+            write_cell(row - 1, col, read_cell(row, col));
+        }
+    }
+    clear_row(HEIGHT - 1);
+}
+
+impl fmt::Write for Writer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for byte in s.bytes() {
+            match byte {
+                // Printable characters are passed thru as is.
+                0x20..=0x7E | b'\n' => self.write_byte(byte),
+                // Anything else shows as an unrenderable block.
+                _ => self.write_byte(0xFE),
+            }
+        }
+        Ok(())
+    }
+}

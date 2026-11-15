@@ -1,29 +1,21 @@
 #![no_std]
 #![no_main]
 
-use core::arch::asm;
-use core::panic::PanicInfo;
+mod vga;
 
-const VGA_BUFFER: *mut u8 = 0xB8000 as *mut u8;
-const WHITE_ON_BLACK: u8 = 0x0F;
+use core::arch::asm;
+use core::fmt::Write;
+use core::panic::PanicInfo;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    // Clear the screen - 80 cols x 25 rows
-    for i in 0..(80 * 25) {
-        unsafe {
-            VGA_BUFFER.add(i * 2).write_volatile(b' ');
-            VGA_BUFFER.add(i * 2 + 1).write_volatile(WHITE_ON_BLACK);
-        }
+    let mut screen = vga::Writer::new();
+    
+    // More lines than fit on screen - to prove scrolling works
+    for i in 1..=30 {
+        writeln!(screen, "Line {} of 30", i).unwrap();
     }
-
-    let msg = b"Hello, FroggeOS!";
-    for (i, &byte) in msg.iter().enumerate() {
-        unsafe {
-            VGA_BUFFER.add(i * 2).write_volatile(byte);
-            VGA_BUFFER.add(i * 2 + 1).write_volatile(WHITE_ON_BLACK);
-        }
-    }
+    writeln!(screen, "Hello, FroggeOS! 6 * 7 = {}", 6 * 7).unwrap();
 
     loop {
         unsafe { asm!("hlt") };
