@@ -7,7 +7,7 @@ org 0x7E00
 KERNEL_ADDR     equ 0x10000             ; where the kernel gets loaded and run
 KERNEL_SEG      equ KERNEL_ADDR >> 4    ; same address as a real-mode segment
 KERNEL_LBA      equ 5                   ; boot sector + 4 stage-2 sectors come first
-KERNEL_SECTORS  equ 64                  ; 64 * 512 = 32KB; build.ps1 must match
+KERNEL_SECTORS  equ 128                 ; 128 * 512 = 64KB; build.ps1 must match
 
 start2:
     mov [boot_drive], dl    ; BIOS gives the boot drive in DL, save it.

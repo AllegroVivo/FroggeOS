@@ -6,6 +6,7 @@ mod keyboard;
 mod lock;
 mod pic;
 mod port;
+mod shell;
 mod timer;
 mod vga;
 
@@ -29,12 +30,7 @@ pub extern "C" fn _start() -> ! {
     interrupts::enable();
     println!("Interrupts enabled.");
 
-    loop {
-        unsafe { asm!("hlt") };
-        while let Some(c) = keyboard::read_char() {
-            print!("{}", c);
-        }
-    }
+    shell::run()
 }
 
 #[panic_handler]
