@@ -86,8 +86,11 @@ fn run_command(line: &str, history: &[String]) {
             }
         }
         "heap" => {
-            let (used, allocations) = heap::stats();
-            println!("{} of {} bytes used, {} allocations not freed", used, heap::SIZE, allocations);
+            let (in_use, reusable, allocations) = heap::stats();
+            println!(
+                "{} bytes in use by {} allocations, {} bytes free for reuse",
+                in_use, allocations, reusable
+            );
         }
         _ => println!("unknown command: {} (try 'help')", command),
     }
