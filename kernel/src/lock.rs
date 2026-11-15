@@ -4,6 +4,8 @@ use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::interrupts;
+
 pub struct SpinLock<T> {
     locked: AtomicBool,
     value: UnsafeCell<T>,
@@ -22,19 +24,24 @@ impl<T> SpinLock<T> {
     }
 
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
+        // Interrupts stay off while the lock is held.
+        let interrupts_were_on = interrupts::are_enabled();
+        interrupts::disable();
+
         // ``swap`` sets the flag to true and returns what it was before.
         // If it was already true, someone else holds the lock.
         while self.locked.swap(true, Ordering::Acquire) {
             core::hint::spin_loop();
         }
-        SpinLockGuard { lock: self }
+        SpinLockGuard { lock: self, interrupts_were_on }
     }
 }
 
-// Proof the lock is held. Used like a reference value, released when out 
+// Proof the lock is held. Used like a reference value, released when out
 // of scope.
 pub struct SpinLockGuard<'a, T> {
     lock: &'a SpinLock<T>,
+    interrupts_were_on: bool,
 }
 
 impl<T> Deref for SpinLockGuard<'_, T> {
@@ -54,5 +61,8 @@ impl<T> DerefMut for SpinLockGuard<'_, T> {
 impl<T> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
         self.lock.locked.store(false, Ordering::Release);
+        if self.interrupts_were_on {
+            interrupts::enable();
+        }
     }
 }

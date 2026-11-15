@@ -66,6 +66,7 @@ pub fn init() {
     idt[13] = IdtEntry::new(general_protection, cs);
     idt[14] = IdtEntry::new(page_fault, cs);
     idt[32] = IdtEntry::new(timer_interrupt, cs);
+    idt[33] = IdtEntry::new(keyboard_interrupt, cs);
 
     let pointer = IdtPointer {
         limit: (size_of::<[IdtEntry; 256]>() - 1) as u16,
@@ -77,7 +78,17 @@ pub fn init() {
 // Allow hardware interrupts in.
 // Call only after ``init()``, ``pic::init()`` and ``timer::init()``.
 pub fn enable() {
-    unsafe { asm!("sti", options(nomem, nostack)) };
+    unsafe { asm!("sti", options(nostack, preserves_flags)) };
+}
+
+pub fn disable() {
+    unsafe { asm!("cli", options(nostack, preserves_flags)) };
+}
+
+pub fn are_enabled() -> bool {
+    let rflags: u64;
+    unsafe { asm!("pushfq", "pop {}", out(reg) rflags, options(nomem, preserves_flags)) };
+    (rflags & 0x200) != 0
 }
 
 // ---- Entry stubs ----
@@ -117,6 +128,7 @@ exception_stub!(double_fault, 8, has_error_code);
 exception_stub!(general_protection, 13, has_error_code);
 exception_stub!(page_fault, 14, has_error_code);
 exception_stub!(timer_interrupt, 32);
+exception_stub!(keyboard_interrupt, 33);
 
 // Saves the registers a Rust function may to change, calls ``exception_handler``,
 // restores them, and returns to the interrupted code.
@@ -164,6 +176,11 @@ struct ExceptionFrame {
 extern "C" fn exception_handler(frame: &ExceptionFrame) {
     if frame.vector == 32 {
         crate::timer::tick();
+        crate::pic::end_of_interrupt();
+        return;
+    }
+    if frame.vector == 33 {
+        crate::keyboard::handle_interrupt();
         crate::pic::end_of_interrupt();
         return;
     }

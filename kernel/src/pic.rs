@@ -19,7 +19,7 @@ pub fn init() {
         outb(PIC2_DATA, 2);
         outb(PIC1_DATA, 0x01);
         outb(PIC2_DATA, 0x01);
-        outb(PIC1_DATA, 0xFE);
+        outb(PIC1_DATA, 0xFC);
         outb(PIC2_DATA, 0xFF);
     }
 }

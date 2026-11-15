@@ -2,6 +2,7 @@
 #![no_main]
 
 mod interrupts;
+mod keyboard;
 mod lock;
 mod pic;
 mod port;
@@ -28,13 +29,10 @@ pub extern "C" fn _start() -> ! {
     interrupts::enable();
     println!("Interrupts enabled.");
 
-    let mut shown = 0;
     loop {
-        unsafe { asm!("hlt") }; // sleep until the next interrupt
-        let seconds = timer::ticks() / timer::HZ;
-        if seconds != shown {
-            shown = seconds;
-            println!("{} seconds", shown);
+        unsafe { asm!("hlt") };
+        while let Some(c) = keyboard::read_char() {
+            print!("{}", c);
         }
     }
 }

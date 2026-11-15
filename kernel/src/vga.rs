@@ -56,6 +56,14 @@ impl Writer {
             scroll_up();
         }
     }
+
+    // Step back by one cell and clear it.
+    fn backspace(&mut self) {
+        if self.col > 0 {
+            self.col -= 1;
+            write_cell(self.row, self.col, WHITE_ON_BLACK | b' ' as u16);
+        }
+    }
 }
 
 fn clear_row(row: usize) {
@@ -80,6 +88,7 @@ impl fmt::Write for Writer {
             match byte {
                 // Printable characters are passed thru as is.
                 0x20..=0x7E | b'\n' => self.write_byte(byte),
+                0x08 => self.backspace(),
                 // Anything else shows as an unrenderable block.
                 _ => self.write_byte(0xFE),
             }

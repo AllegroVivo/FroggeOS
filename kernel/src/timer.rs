@@ -23,7 +23,3 @@ pub fn init() {
 pub fn tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
-
-pub fn ticks() -> u64 {
-    TICKS.load(Ordering::Relaxed)
-}
