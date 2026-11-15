@@ -1,6 +1,6 @@
 Set-Location $PSScriptRoot
 
-$kernelSectors = 16     # must match KERNEL SECTORS in boot/stage2.asm
+$kernelSectors = 64     # must match KERNEL SECTORS in boot/stage2.asm
 
 nasm -f bin boot/boot.asm -o boot.bin
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -22,10 +22,12 @@ if ($kernel.length -gt $kernelSectors * 512) {
     exit 1
 }
 
-# Pad the kernel with zeros up to a whole number of sectors
-$padded = New-Object byte[] ($kernelSectors * 512)
-[Array]::Copy($kernel, $padded, $kernel.length)
-
-[System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $boot + $stage2 + $padded)
+# Lay everything out on a blank 1.44MB Floppy image. Using the appropriate floppy
+# size makes QEMU use the standard geometry.
+$image = New-Object byte[] 1474560
+[Array]::Copy($boot,   0, $image, 0,        $boot.Length)   # sector 0
+[Array]::Copy($stage2, 0, $image, 512,      $stage2.Length) # sectors 1-4
+[Array]::Copy($kernel, 0, $image, 5 * 512,  $kernel.Length) # sectors 5+
+[System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $image)
 
 qemu-system-x86_64 -fda disk.img
