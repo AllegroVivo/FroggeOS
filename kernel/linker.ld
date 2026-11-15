@@ -9,6 +9,10 @@ SECTIONS {
     }
 
     .rodata : { *(.rodata .rodata.*) }
-    .data   : { *(.data .data.*) }
-    .bss    : { *(.bss .bss.*) *(COMMON) }
+
+    .data : { 
+        *(.data .data.*)
+        *(.bss .bss.*)
+        *(COMMON)
+     }
 }

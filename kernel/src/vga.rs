@@ -2,6 +2,7 @@
 // is a u16 - low bytes is the character, high byte is the color.
 
 use core::fmt;
+use crate::lock::SpinLock;
 
 const BUFFER_ADDR: usize = 0xB8000;
 const WIDTH: usize = 80;
@@ -26,11 +27,6 @@ pub struct Writer {
 }
 
 impl Writer {
-    pub fn new() -> Writer {
-        let mut writer = Writer { row: 0, col: 0 };
-        writer.clear();
-        writer
-    }
 
     pub fn clear(&mut self) {
         for row in 0..HEIGHT {
@@ -90,4 +86,27 @@ impl fmt::Write for Writer {
         }
         Ok(())
     }
+}
+
+static WRITER: SpinLock<Writer> = SpinLock::new(Writer { row: 0, col: 0 });
+
+pub fn clear_screen() {
+    WRITER.lock().clear();
+}
+
+// Called by print!/println! - must be pub so macros can expand in other modules.
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    WRITER.lock().write_fmt(args).unwrap();
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! println {
+    () => {$crate::print!("\n")};
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
 }
