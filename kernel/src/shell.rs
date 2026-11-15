@@ -1,8 +1,10 @@
 // A command prompt.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::arch::asm;
 
-use crate::{keyboard, timer, vga};
+use crate::{heap, keyboard, timer, vga};
 use crate::{print, println};
 
 // ``> `` + 78 characters fills an 80-character row.
@@ -13,6 +15,7 @@ pub fn run() -> ! {
 
     let mut line = [0u8; MAX_LINE];
     let mut len = 0;
+    let mut history: Vec<String> = Vec::new();
     print!("> ");
 
     loop {
@@ -20,7 +23,10 @@ pub fn run() -> ! {
             '\n' => {
                 println!();
                 let text = core::str::from_utf8(&line[..len]).unwrap();
-                run_command(text);
+                if !text.trim().is_empty() {
+                    history.push(String::from(text)); // heap copy
+                }
+                run_command(text, &history);
                 len = 0;
                 print!("> ");
             }
@@ -50,7 +56,7 @@ fn wait_for_char() -> char {
     }
 }
 
-fn run_command(line: &str) {
+fn run_command(line: &str, history: &[String]) {
     let mut words = line.split_whitespace();
     let Some(command) = words.next() else {
         return;
@@ -62,6 +68,8 @@ fn run_command(line: &str) {
             println!("clear        clear the screen");
             println!("echo <text>  print <text>");
             println!("uptime       time since the timer started");
+            println!("history      list the commands typed so far");
+            println!("heap         show how much of the heap is used");
         }
         "clear" => vga::clear_screen(),
         "echo" => {
@@ -71,6 +79,15 @@ fn run_command(line: &str) {
         "uptime" => {
             let ticks = timer::ticks();
             println!("{}.{:02} seconds", ticks / timer::HZ, ticks % timer::HZ);
+        }
+        "history" => {
+            for (i, entry) in history.iter().enumerate() {
+                println!("{:>3}  {}", i + 1, entry);
+            }
+        }
+        "heap" => {
+            let (used, allocations) = heap::stats();
+            println!("{} of {} bytes used, {} allocations not freed", used, heap::SIZE, allocations);
         }
         _ => println!("unknown command: {} (try 'help')", command),
     }

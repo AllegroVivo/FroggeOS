@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+mod heap;
 mod interrupts;
 mod keyboard;
 mod lock;
