@@ -65,12 +65,19 @@ pub fn init() {
     idt[8] = IdtEntry::new(double_fault, cs);
     idt[13] = IdtEntry::new(general_protection, cs);
     idt[14] = IdtEntry::new(page_fault, cs);
+    idt[32] = IdtEntry::new(timer_interrupt, cs);
 
     let pointer = IdtPointer {
         limit: (size_of::<[IdtEntry; 256]>() - 1) as u16,
         base: idt.as_ptr() as u64,
     };
     unsafe { asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags)) };
+}
+
+// Allow hardware interrupts in.
+// Call only after ``init()``, ``pic::init()`` and ``timer::init()``.
+pub fn enable() {
+    unsafe { asm!("sti", options(nomem, nostack)) };
 }
 
 // ---- Entry stubs ----
@@ -109,6 +116,7 @@ exception_stub!(invalid_opcode, 6);
 exception_stub!(double_fault, 8, has_error_code);
 exception_stub!(general_protection, 13, has_error_code);
 exception_stub!(page_fault, 14, has_error_code);
+exception_stub!(timer_interrupt, 32);
 
 // Saves the registers a Rust function may to change, calls ``exception_handler``,
 // restores them, and returns to the interrupted code.
@@ -154,6 +162,12 @@ struct ExceptionFrame {
 }
 
 extern "C" fn exception_handler(frame: &ExceptionFrame) {
+    if frame.vector == 32 {
+        crate::timer::tick();
+        crate::pic::end_of_interrupt();
+        return;
+    }
+
     let name = match frame.vector {
         0 => "divide error",
         3 => "breakpoint",
