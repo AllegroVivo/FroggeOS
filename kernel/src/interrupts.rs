@@ -4,6 +4,7 @@
 use core::arch::{asm, naked_asm};
 use core::mem::size_of;
 
+use crate::gdt;
 use crate::lock::SpinLock;
 use crate::println;
 
@@ -63,6 +64,7 @@ pub fn init() {
     idt[3] = IdtEntry::new(breakpoint, cs);
     idt[6] = IdtEntry::new(invalid_opcode, cs);
     idt[8] = IdtEntry::new(double_fault, cs);
+    idt[8].ist = gdt::DOUBLE_FAULT_IST; // runs on the emergency stack.
     idt[13] = IdtEntry::new(general_protection, cs);
     idt[14] = IdtEntry::new(page_fault, cs);
     idt[32] = IdtEntry::new(timer_interrupt, cs);

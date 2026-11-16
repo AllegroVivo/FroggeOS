@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod calc;
+mod gdt;
 mod heap;
 mod interrupts;
 mod keyboard;
@@ -21,6 +22,7 @@ use core::panic::PanicInfo;
 pub extern "C" fn _start() -> ! {
     vga::clear_screen();
 
+    gdt::init();
     interrupts::init();
     pic::init();
     timer::init();
