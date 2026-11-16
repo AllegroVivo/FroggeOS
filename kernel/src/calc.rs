@@ -45,8 +45,15 @@ enum Token<'a> {
     LeftParen,
     RightParen,
     Equals,
+    EqualEqual,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 }
 
+#[allow(clippy::needless_lifetimes)]
 fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
     let mut tokens = Vec::new();
     let mut chars = text.char_indices().peekable();
@@ -60,7 +67,20 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             '%' => Token::Percent,
             '(' => Token::LeftParen,
             ')' => Token::RightParen,
-            '=' => Token::Equals,
+            '=' | '!' | '<' | '>' => {
+                // NOTE: ``==``, ``!=``, ``<=`` and ``>=`` are two characters in one token.
+                let equals_next = chars.next_if(|&(_, d)| d == '=').is_some();
+                match (c, equals_next) {
+                    ('=', false) => Token::Equals,
+                    ('=', true) => Token::EqualEqual,
+                    ('!', true) => Token::NotEqual,
+                    ('<', false) => Token::Less,
+                    ('<', true) => Token::LessEqual,
+                    ('>', false) => Token::Greater,
+                    ('>', true) => Token::GreaterEqual,
+                    _ => return Err(Error::BadChar(c)),
+                }
+            },
             '0'..='9' => {
                 let mut value = (c as u8 - b'0') as i64;
                 while let Some(&(_, d)) = chars.peek() {
@@ -100,6 +120,12 @@ enum Op {
     Multiply,
     Divide,
     Remainder,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 }
 
 enum Expr<'a> {
@@ -126,6 +152,24 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr<'a>, Error<'a>> {
+        let mut left = self.sum()?;
+        loop {
+            let op = match self.peek() {
+                Some(Token::EqualEqual) => Op::Equal,
+                Some(Token::NotEqual) => Op::NotEqual,
+                Some(Token::Less) => Op::Less,
+                Some(Token::LessEqual) => Op::LessEqual,
+                Some(Token::Greater) => Op::Greater,
+                Some(Token::GreaterEqual) => Op::GreaterEqual,
+                _ => return Ok(left),
+            };
+            self.pos += 1;
+            let right = self.sum()?;
+            left = Expr::Binary(op, Box::new(left), Box::new(right));
+        }
+    }
+
+    fn sum(&mut self) -> Result<Expr<'a>, Error<'a>> {
         let mut left = self.term()?;
         loop {
             let op = match self.peek() {
@@ -194,6 +238,12 @@ fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<i64, Error<'a>> {
                 Op::Divide | Op::Remainder if b == 0 => return Err(Error::DivideByZero),
                 Op::Divide => a.checked_div(b),
                 Op::Remainder => a.checked_rem(b),
+                Op::Equal => Some((a == b) as i64),
+                Op::NotEqual => Some((a != b) as i64),
+                Op::Less => Some((a < b) as i64),
+                Op::LessEqual => Some((a <= b) as i64),
+                Op::Greater => Some((a > b) as i64),
+                Op::GreaterEqual => Some((a >= b) as i64),
             };
             result.ok_or(Error::Overflow)
         }

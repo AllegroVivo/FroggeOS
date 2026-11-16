@@ -72,6 +72,7 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
+            println!("a < b        compare: 1 if true, 0 if false (also == != <= > >=)");
             println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1")
         },
         "clear" => vga::clear_screen(),
