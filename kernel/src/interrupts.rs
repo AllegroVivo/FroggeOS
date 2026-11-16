@@ -207,7 +207,9 @@ extern "C" fn exception_handler(frame: &ExceptionFrame) {
         unsafe { asm!("mov {}, cr2", out(reg) addr, options(nomem, nostack, preserves_flags)) };
         println!("  address: {:#x}", addr);
     }
-
+    if frame.vector == 8 && crate::paging::stack_overflowed() {
+        println!("  cause: stack overflow");
+    }
     if frame.vector == 3 {
         return; // breakpoints are harmless
     }

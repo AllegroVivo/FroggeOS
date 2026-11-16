@@ -9,6 +9,7 @@ mod heap;
 mod interrupts;
 mod keyboard;
 mod lock;
+mod paging;
 mod pic;
 mod port;
 mod shell;
@@ -24,6 +25,7 @@ pub extern "C" fn _start() -> ! {
 
     gdt::init();
     interrupts::init();
+    paging::init();
     pic::init();
     timer::init();
 
