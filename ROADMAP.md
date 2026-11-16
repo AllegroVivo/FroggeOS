@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-16):** milestone 0 is done. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, exception handlers, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell with a calculator. The kernel is 43 KB of its 128 KB budget.
+**Status (2026-11-16):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell with a calculator that has variables and comparisons. The kernel is 61 KB of its 128 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -46,8 +46,8 @@
   - 2.1.3 A `log!` macro with levels (info, warn, error) that writes to serial only
   - 2.1.4 ☆ A crash screen showing all registers plus a stack backtrace. The backtrace needs `-C force-frame-pointers=yes`.
 - **2.2 CPU setup**
-  - 2.2.1 Give the kernel its own GDT, written in Rust, instead of using the one inside stage 2
-  - 2.2.2 Add a TSS with an Interrupt Stack Table entry. A double fault (for example, a stack overflow) then gets a fresh stack instead of causing a triple fault and reboot.
+  - 2.2.1 Give the kernel its own GDT, written in Rust, instead of using the one inside stage 2 ✅
+  - 2.2.2 Add a TSS with an Interrupt Stack Table entry. A double fault (for example, a stack overflow) then gets a fresh stack instead of causing a triple fault and reboot. ✅
   - 2.2.3 Detect CPU features with CPUID and add a `cpu` command
   - 2.2.4 ⚑ Floating point. Rust currently does floats in software on this target, which works but is slow. Turning on SSE gives hardware floats, but then the task switcher must also save FPU state.
 - **2.3 Interrupts**
@@ -65,7 +65,7 @@
   - 2.4.5 Map device memory above 1 GB, such as the framebuffer and the APIC at 0xFEE00000. The boot page tables only cover the first 1 GB.
   - 2.4.6 ⚑ Address-space model (see the decisions table)
   - 2.4.7 Size the heap from how much RAM is really there, or let it grow by asking for more frames
-  - 2.4.8 ☆ Unmapped guard pages under each stack, so an overflow causes a clean page fault instead of silent corruption
+  - 2.4.8 ☆ Unmapped guard pages under each stack, so an overflow causes a clean page fault instead of silent corruption. The boot stack has one ✅ (it overflows into a reported double fault). The double-fault stack doesn't yet, and task stacks (2.6) will need them too.
 - **2.5 Time**
   - 2.5.1 PIT at 100 Hz, a tick counter, `uptime` ✅
   - 2.5.2 `sleep(ms)`: wait with `hlt` for now; it becomes a real sleep once tasks exist (2.6.5)
@@ -154,8 +154,8 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.1** ⚑ Syntax, typing and how code runs (see the decisions table)
 - **6.2** Move the language into its own `no_std` library crate, so `cargo test` runs it on Windows without QEMU
 - **6.3 Expressions**
-  - 6.3.1 Comparisons, `&&` `||` `!`, bitwise operators, shifts, `%`, hex literals
-  - 6.3.2 Variables and assignment that persist between shell lines (a symbol table)
+  - 6.3.1 Comparisons ✅, `&&` `||` `!`, bitwise operators, shifts, `%` ✅, hex literals
+  - 6.3.2 Variables and assignment that persist between shell lines (a symbol table), plus a `vars` command ✅
   - 6.3.3 Strings and characters
   - 6.3.4 Error messages with line and column, and a caret under the problem
 - **6.4 Statements**
@@ -182,7 +182,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.9** ☆ A disassembler for the code generator, and a debugger with breakpoints (it uses the existing `int3` handler)
 
 ### 7. Shell, user interface and apps
-- **7.1 Text shell** ✅ (help, clear, echo, uptime, history, heap, calculator)
+- **7.1 Text shell** ✅ (help, clear, echo, uptime, history, heap, vars, calculator)
   - 7.1.1 Line editing: move the cursor left and right, insert mid-line, Delete (needs 3.1.3)
   - 7.1.2 Up and down arrows recall history
   - 7.1.3 Tab completion
@@ -218,7 +218,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **8.3** In-kernel self-tests: a `selftest` command that prints PASS or FAIL over serial, then closes QEMU with a status code through the `isa-debug-exit` device. This automates the boot checks now done by hand. Rust's built-in custom test framework needs nightly Rust, but this approach works on stable.
 - **8.4** Debugging with GDB: QEMU `-s -S`, plus keeping the ELF file next to the flat binary so GDB has symbols
 - **8.5** ☆ Replace build.ps1 with a Rust `xtask` build tool
-- **8.6** Merge `first-boot` into `main` at each milestone
+- **8.6** ~~Merge `first-boot` into `main` at each milestone~~ No longer needed: `first-boot` became `main` when the project went on GitHub ✅
 
 **Parked on purpose:** USB (huge; the BIOS and QEMU emulate PS/2 for keyboard and mouse), networking (TempleOS has none by design), UEFI, sound cards, user mode and memory protection between programs.
 
