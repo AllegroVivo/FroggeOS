@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 
-use crate::{heap, keyboard, timer, vga};
+use crate::{calc, heap, keyboard, timer, vga};
 use crate::{print, println};
 
 // ``> `` + 78 characters fills an 80-character row.
@@ -62,6 +62,15 @@ fn run_command(line: &str, history: &[String]) {
         return;
     };
 
+    // A line starting with a digit, '(', or '-' is a calculation.
+    if command.starts_with(|c: char| c.is_ascii_digit() || c == '(' || c == '-') {
+        match calc::evaluate(line) {
+            Ok(value) => println!("{}", value),
+            Err(error) => println!("error: {}", error),
+        }
+        return;
+    }
+
     match command {
         "help" => {
             println!("help         show this list");
@@ -70,6 +79,7 @@ fn run_command(line: &str, history: &[String]) {
             println!("uptime       time since the timer started");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
+            println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5")
         }
         "clear" => vga::clear_screen(),
         "echo" => {
