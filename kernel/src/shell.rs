@@ -71,6 +71,7 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             println!("uptime       time since the timer started");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
+            println!("vars         list the stored variables");
             println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
             println!("a < b        compare: 1 if true, 0 if false (also == != <= > >=)");
             println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1")
@@ -95,6 +96,11 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
                 "{} bytes in use by {} allocations, {} bytes free for reuse",
                 in_use, allocations, reusable
             );
+        },
+        "vars" => {
+            for (name, value) in vars.iter() {
+                println!("{} = {}", name, value);
+            }
         },
         _ => match calc::evaluate(line, vars) {
             Ok(value) => println!("{}", value),
