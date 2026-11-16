@@ -16,6 +16,7 @@ pub fn run() -> ! {
     let mut line = [0u8; MAX_LINE];
     let mut len = 0;
     let mut history: Vec<String> = Vec::new();
+    let mut vars = calc::Variables::new();
     print!("> ");
 
     loop {
@@ -26,7 +27,7 @@ pub fn run() -> ! {
                 if !text.trim().is_empty() {
                     history.push(String::from(text)); // heap copy
                 }
-                run_command(text, &history);
+                run_command(text, &history, &mut vars);
                 len = 0;
                 print!("> ");
             }
@@ -56,20 +57,11 @@ fn wait_for_char() -> char {
     }
 }
 
-fn run_command(line: &str, history: &[String]) {
+fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
     let mut words = line.split_whitespace();
     let Some(command) = words.next() else {
         return;
     };
-
-    // A line starting with a digit, '(', or '-' is a calculation.
-    if command.starts_with(|c: char| c.is_ascii_digit() || c == '(' || c == '-') {
-        match calc::evaluate(line) {
-            Ok(value) => println!("{}", value),
-            Err(error) => println!("error: {}", error),
-        }
-        return;
-    }
 
     match command {
         "help" => {
@@ -79,29 +71,33 @@ fn run_command(line: &str, history: &[String]) {
             println!("uptime       time since the timer started");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
-            println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5")
-        }
+            println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
+            println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1")
+        },
         "clear" => vga::clear_screen(),
         "echo" => {
             let text = line.trim_start()["echo".len()..].trim();
             println!("{}", text);
-        }
+        },
         "uptime" => {
             let ticks = timer::ticks();
             println!("{}.{:02} seconds", ticks / timer::HZ, ticks % timer::HZ);
-        }
+        },
         "history" => {
             for (i, entry) in history.iter().enumerate() {
                 println!("{:>3}  {}", i + 1, entry);
             }
-        }
+        },
         "heap" => {
             let (in_use, reusable, allocations) = heap::stats();
             println!(
                 "{} bytes in use by {} allocations, {} bytes free for reuse",
                 in_use, allocations, reusable
             );
-        }
-        _ => println!("unknown command: {} (try 'help')", command),
+        },
+        _ => match calc::evaluate(line, vars) {
+            Ok(value) => println!("{}", value),
+            Err(error) => println!("Error: {}", error),
+        },
     }
 }

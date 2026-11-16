@@ -1,25 +1,31 @@
 // A calculator for integer expressions.
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-// ---- Errors ----
 
-pub enum Error {
+// Values stored from ``name = expression``.
+pub type Variables = BTreeMap<String, i64>;
+
+pub enum Error<'a> {
     BadChar(char),          // a character that isn't part of any token
     Syntax(&'static str),   // the tokens don't form an expression
     DivideByZero,
     Overflow,               // a number or result is too big for an i64
+    UnknownName(&'a str),   // a name with no value stored under it
 }
 
 // Display is used by ``println!("{}", error)``
-impl fmt::Display for Error {
+impl fmt::Display for Error<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::BadChar(c) => write!(f, "unexpected character '{}'", c),
             Error::Syntax(message) => write!(f, "{}", message),
             Error::DivideByZero => write!(f, "division by zero"),
-            Error::Overflow => write!(f, "number too big")
+            Error::Overflow => write!(f, "number too big"),
+            Error::UnknownName(name) => write!(f, "'{}' is not a command or variable", name),
         }
     }
 }
@@ -28,8 +34,9 @@ impl fmt::Display for Error {
 // ``Copy`` allows a token to be copied in the same manner as an integer.
 // ``PartialEq`` allows for comparison with ``==``.
 #[derive(Clone, Copy, PartialEq)]
-enum Token {
+enum Token<'a> {
     Number(i64),
+    Name(&'a str),
     Plus,
     Minus,
     Star,
@@ -37,12 +44,13 @@ enum Token {
     Percent,
     LeftParen,
     RightParen,
+    Equals,
 }
 
-fn tokenize(text: &str) -> Result<Vec<Token>, Error> {
+fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
     let mut tokens = Vec::new();
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
         let token = match c {
             ' ' => continue,
             '+' => Token::Plus,
@@ -52,9 +60,10 @@ fn tokenize(text: &str) -> Result<Vec<Token>, Error> {
             '%' => Token::Percent,
             '(' => Token::LeftParen,
             ')' => Token::RightParen,
+            '=' => Token::Equals,
             '0'..='9' => {
                 let mut value = (c as u8 - b'0') as i64;
-                while let Some(&d) = chars.peek() {
+                while let Some(&(_, d)) = chars.peek() {
                     if !d.is_ascii_digit() {
                         break;
                     }
@@ -66,6 +75,17 @@ fn tokenize(text: &str) -> Result<Vec<Token>, Error> {
                         .ok_or(Error::Overflow)?;
                 }
                 Token::Number(value)
+            }
+            'a'..='z' | 'A'..='Z' | '_' => {
+                let mut end = start + 1;
+                while let Some(&(i, d)) = chars.peek() {
+                    if !(d.is_ascii_alphanumeric() || d == '_') {
+                        break;
+                    }
+                    chars.next();
+                    end = i + 1;
+                }
+                Token::Name(&text[start..end])
             }
             other => return Err(Error::BadChar(other))
         };
@@ -82,29 +102,30 @@ enum Op {
     Remainder,
 }
 
-enum Expr {
+enum Expr<'a> {
     Number(i64),
-    Negate(Box<Expr>),
-    Binary(Op, Box<Expr>, Box<Expr>),
+    Variable(&'a str),
+    Negate(Box<Expr<'a>>),
+    Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
-struct Parser {
-    tokens: Vec<Token>,
+struct Parser<'a> {
+    tokens: Vec<Token<'a>>,
     pos: usize,
 }
 
-impl Parser {
-    fn peek(&self) -> Option<Token> {
+impl<'a> Parser<'a> {
+    fn peek(&self) -> Option<Token<'a>> {
         self.tokens.get(self.pos).copied()
     }
 
-    fn next(&mut self) -> Option<Token> {
+    fn next(&mut self) -> Option<Token<'a>> {
         let token = self.peek();
         self.pos += 1;
         token
     }
 
-    fn expression(&mut self) -> Result<Expr, Error> {
+    fn expression(&mut self) -> Result<Expr<'a>, Error<'a>> {
         let mut left = self.term()?;
         loop {
             let op = match self.peek() {
@@ -118,7 +139,7 @@ impl Parser {
         }
     }
 
-    fn term(&mut self) -> Result<Expr, Error> {
+    fn term(&mut self) -> Result<Expr<'a>, Error<'a>> {
         let mut left = self.unary()?;
         loop {
             let op = match self.peek() {
@@ -133,7 +154,7 @@ impl Parser {
         }
     }
 
-    fn unary(&mut self) -> Result<Expr, Error> {
+    fn unary(&mut self) -> Result<Expr<'a>, Error<'a>> {
         if self.peek() == Some(Token::Minus) {
             self.pos += 1;
             return Ok(Expr::Negate(Box::new(self.unary()?)));
@@ -141,9 +162,10 @@ impl Parser {
         self.primary()
     }
 
-    fn primary(&mut self) -> Result<Expr, Error> {
+    fn primary(&mut self) -> Result<Expr<'a>, Error<'a>> {
         match self.next() {
             Some(Token::Number(n)) => Ok(Expr::Number(n)),
+            Some(Token::Name(name)) => Ok(Expr::Variable(name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
                 if self.next() != Some(Token::RightParen) {
@@ -151,19 +173,20 @@ impl Parser {
                 }
                 Ok(inside)
             }
-            Some(_) => Err(Error::Syntax("expected a number or '('")),
+            Some(_) => Err(Error::Syntax("expected a number, variable, or '('")),
             None => Err(Error::Syntax("unexpected end of input")),
         }
     }
 }
 
-fn eval(expr: &Expr) -> Result<i64, Error> {
+fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<i64, Error<'a>> {
     match expr {
         Expr::Number(n) => Ok(*n),
-        Expr::Negate(inner) => eval(inner)?.checked_neg().ok_or(Error::Overflow),
+        Expr::Variable(name) => vars.get(*name).copied().ok_or(Error::UnknownName(name)),
+        Expr::Negate(inner) => eval(inner, vars)?.checked_neg().ok_or(Error::Overflow),
         Expr::Binary(op, left, right) => {
-            let a = eval(left)?;
-            let b = eval(right)?;
+            let a = eval(left, vars)?;
+            let b = eval(right, vars)?;
             let result = match op {
                 Op::Add => a.checked_add(b),
                 Op::Subtract => a.checked_sub(b),
@@ -177,12 +200,20 @@ fn eval(expr: &Expr) -> Result<i64, Error> {
     }
 }
 
-pub fn evaluate(text: &str) -> Result<i64, Error> {
+pub fn evaluate<'a>(text: &'a str, vars: &mut Variables) -> Result<i64, Error<'a>> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, pos: 0 };
+    let (target, start) = match tokens[..] {
+        [Token::Name(name), Token::Equals, ..] => (Some(name), 2),
+        _ => (None, 0),
+    };
+    let mut parser = Parser { tokens, pos: start };
     let expr = parser.expression()?;
+    let value = eval(&expr, vars)?;
     if parser.pos < parser.tokens.len() {
-        return Err(Error::Syntax("unexpected input after the expression"));
+        return Err(Error::Syntax("unexpected input after expression"));
     }
-    eval(&expr)
+    if let Some(name) = target {
+        vars.insert(String::from(name), value);
+    }
+    Ok(value)
 }
