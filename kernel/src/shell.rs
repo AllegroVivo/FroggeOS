@@ -74,7 +74,11 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             println!("vars         list the stored variables");
             println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
             println!("a < b        compare: 1 if true, 0 if false (also == != <= > >=)");
-            println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1")
+            println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1");
+            println!("a; b         do a, then b");
+            // println! requires `{{` and `}}` to print single `{` and `}`.
+            println!("if (x) {{}}    run the block if x isn't 0: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
+            println!("while (x) {{}} repeat the block while x isn't 0: while (i < 5) {{ i = i + 1 }}");
         },
         "clear" => vga::clear_screen(),
         "echo" => {
@@ -103,7 +107,8 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             }
         },
         _ => match calc::evaluate(line, vars) {
-            Ok(value) => println!("{}", value),
+            Ok(Some(value)) => println!("{}", value),
+            Ok(None) => {} // line ended with an `if` or `while`.
             Err(error) => println!("Error: {}", error),
         },
     }
