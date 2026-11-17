@@ -52,7 +52,7 @@ fn syntax_errors() {
         ("1 2", "Error: expected ';'"),
         ("2x", "Error: expected ';'"),
         ("3 $ 4", "Error: unexpected character '$'"),
-        ("1 ! 2", "Error: unexpected character '!'"),
+        ("1 & 2", "Error: unexpected character '&'"),
         ("1 < = 2", "Error: expected a number, variable, or '('"),
     ]);
 }
@@ -92,16 +92,54 @@ fn mistyped_commands() {
 #[test]
 fn comparisons() {
     check(&[
-        ("1 < 2", "1"),
-        ("2 < 1", "0"),
-        ("3 <= 3", "1"),
-        ("5 >= 5", "1"),
-        ("2 == 2", "1"),
-        ("2 != 2", "0"),
-        ("1 + 2 == 3", "1"), // + comes before ==
-        ("(1 < 2) + (3 < 4)", "2"),
-        ("3 > 2 > 1", "0"), // (3 > 2) is 1, and 1 > 1 is 0
-        ("big = 7 > 3", "1"),
+        ("1 < 2", "True"),
+        ("2 < 1", "False"),
+        ("3 <= 3", "True"),
+        ("5 >= 5", "True"),
+        ("2 == 2", "True"),
+        ("2 != 2", "False"),
+        ("1 + 2 == 3", "True"), // + comes before ==
+        ("true == 1 < 2", "True"), // < comes before ==, as in C#
+        ("big = 7 > 3", "True"),
+        ("big == false", "False"),
+        // A comparison gives a Boolean, and a Boolean isn't a number.
+        ("(1 < 2) + (3 < 4)", "Error: '+' needs Int64, not Boolean"),
+        ("3 > 2 > 1", "Error: '>' needs Int64, not Boolean"),
+        ("1 == true", "Error: '==' needs Int64, not Boolean"),
+        ("true == 1", "Error: '==' needs Boolean, not Int64"),
+    ]);
+}
+
+#[test]
+fn booleans() {
+    check(&[
+        ("true", "True"),
+        ("!true", "False"),
+        ("!!true", "True"),
+        ("true && false", "False"),
+        ("true || false", "True"),
+        ("true || true && false", "True"), // && comes before ||
+        ("1 < 2 && 2 < 3", "True"),
+        ("!(1 > 2)", "True"),
+        ("t = true; f = !t; t != f", "True"),
+        ("!1", "Error: '!' needs Boolean, not Int64"),
+        ("-true", "Error: '-' needs Int64, not Boolean"),
+        ("true + 1", "Error: '+' needs Int64, not Boolean"),
+        ("1 && true", "Error: '&&' needs Boolean, not Int64"),
+    ]);
+}
+
+#[test]
+fn short_circuit() {
+    check(&[
+        // && and || skip the right side when the left side decides the answer.
+        ("false && 1 / 0 == 0", "False"),
+        ("true || 1 / 0 == 0", "True"),
+        ("true && 1 / 0 == 0", "Error: division by zero"),
+        ("x = 0; x != 0 && 10 / x > 1", "False"),
+        // Types are only checked while running (a checking pass is 6.7.3),
+        // so a skipped right side isn't checked either.
+        ("false && 5", "False"),
     ]);
 }
 
@@ -122,8 +160,9 @@ fn if_else() {
         ("x = 5; if (x > 3) { y = 1 } else { y = 2 }", ""),
         ("y", "1"),
         ("if (x > 9) { y = 1 } else { y = 2 }; y", "2"),
-        ("if (0) { z = 1 }; z", "Error: 'z' is not a command or variable"),
-        ("if (-1) { z = 1 }; z", "1"), // any value but 0 counts as true
+        ("if (false) { z = 1 }; z", "Error: 'z' is not a command or variable"),
+        ("if (true) { z = 1 }; z", "1"),
+        ("if (1) { z = 2 }", "Error: if needs Boolean, not Int64"), // write (x != 0)
         ("n = 7; if (n < 5) { c = 1 } else if (n < 10) { c = 2 } else { c = 3 }; c", "2"),
         ("if x > 1 { y = 1 }", "Error: expected '(' after if or while"),
         ("if (1 > 0 { 2 }", "Error: expected ')'"),
@@ -139,7 +178,8 @@ fn while_loops() {
     check(&[
         ("i = 0; s = 0; while (i < 10) { i = i + 1; s = s + i }; s", "55"),
         ("i = 0; while (i < 1000000) { i = i + 1 }; i", "1000000"), // just fits
-        ("while (1) {}", "Error: loop stopped after 1000000 rounds"),
+        ("while (true) {}", "Error: loop stopped after 1000000 rounds"),
+        ("while (1) {}", "Error: while needs Boolean, not Int64"),
         // Statements before an error stay done: i is still 0.
         ("i = 0; while (i < 3) { i = i + 1 / 0 }", "Error: division by zero"),
         ("i", "0"),

@@ -74,12 +74,13 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             println!("heap         show how much of the heap is used");
             println!("vars         list the stored variables");
             println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
-            println!("a < b        compare: 1 if true, 0 if false (also == != <= > >=)");
+            println!("a < b        compare, giving True or False (also == != <= > >=)");
+            println!("a && b       and: both true; also a || b (or: either one) and !a (not)");
             println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1");
             println!("a; b         do a, then b");
             // println! requires `{{` and `}}` to print single `{` and `}`.
-            println!("if (x) {{}}    run the block if x isn't 0: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
-            println!("while (x) {{}} repeat the block while x isn't 0: while (i < 5) {{ i = i + 1 }}");
+            println!("if (x) {{}}    run the block if x is true: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
+            println!("while (x) {{}} repeat the block while x is true: while (i < 5) {{ i = i + 1 }}");
         },
         "clear" => vga::clear_screen(),
         "echo" => {

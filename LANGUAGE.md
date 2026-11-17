@@ -4,7 +4,7 @@
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
-**Today's calculator is different in three ways** that change on the way: variables are untyped (`x = 5`), comparisons give 1 or 0, and `;` can be left off before `}` or at the end of a line. Steps 6.3.5 and 6.4.4 in [ROADMAP.md](ROADMAP.md) bring it in line with this document.
+**Today's calculator is different in two ways** that change on the way: variables are untyped (`x = 5`), and `;` can be left off before `}` or at the end of a line. Steps 6.3.5 and 6.4.4 in [ROADMAP.md](ROADMAP.md) bring it in line with this document.
 
 **On size:** this is most of C#, plus pointers. A C# compiler is a large program, so each feature has its own roadmap step, and milestone M2 only needs the small core (§11). The costliest features are generics, `async`/`await`, `yield`, and exceptions in the x86 compiler (6.8).
 
@@ -118,7 +118,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 | References | `String`, `Object`, arrays `T[]`, classes, interfaces, delegates | 8 (the address) |
 | Return type only | `Void` | none |
 
-- **`Boolean` is strict, as in C#.** Comparisons give `true` or `false`, and `if`, `while`, `!`, `&&` and `||` only accept a Boolean. `if (n)` has to be written `if (n != 0)`.
+- **`Boolean` is strict, as in C#.** Comparisons give `true` or `false`, and `if`, `while`, `!`, `&&` and `||` only accept a Boolean. `if (n)` has to be written `if (n != 0)`. It prints as `True` or `False`, like C#'s `ToString()`.
 - **A `Char` is 1 byte,** a code-page-437 character: what the VGA text screen shows and what the keyboard driver produces. C#'s Char is 2 bytes (UTF-16). `Char` and `Byte` are the same size but different types: a `Byte` prints as a number (`70`), a `Char` as text (`F`).
 - **`String` works like C#'s.** It's immutable and supports `+`, `.Length` and `s[i]` (which gives a `Char`).
 - **`Object` is the base of every class.** `is`, `as` and `typeof` need it.

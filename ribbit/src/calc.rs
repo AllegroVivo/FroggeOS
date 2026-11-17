@@ -7,8 +7,48 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
+// A value that the language works with.
+#[derive(Clone, Copy)]
+pub enum Value {
+    Int64(i64),
+    Boolean(bool),
+}
+
+impl Value {
+    fn type_name(self) -> &'static str {
+        match self {
+            Value::Int64(_) => "Int64",
+            Value::Boolean(_) => "Boolean",
+        }
+    }
+
+    fn int64<'a>(self, place: &'static str) -> Result<i64, Error<'a>> {
+        match self {
+            Value::Int64(n) => Ok(n),
+            _ => Err(Error::WrongType { place, wanted: "Int64", found: self.type_name() }),
+        }
+    }
+
+    fn boolean<'a>(self, place: &'static str) -> Result<bool, Error<'a>> {
+        match self {
+            Value::Boolean(b) => Ok(b),
+            _ => Err(Error::WrongType { place, wanted: "Boolean", found: self.type_name() }),
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Int64(n) => write!(f, "{}", n),
+            Value::Boolean(true) => write!(f, "True"),
+            Value::Boolean(false) => write!(f, "False"),
+        }
+    }
+}
+
 // Values stored from ``name = expression``.
-pub type Variables = BTreeMap<String, i64>;
+pub type Variables = BTreeMap<String, Value>;
 
 pub enum Error<'a> {
     BadChar(char),          // a character that isn't part of any token
@@ -17,6 +57,8 @@ pub enum Error<'a> {
     Overflow,               // a number or result is too big for an i64
     UnknownName(&'a str),   // a name with no value stored under it
     LoopLimit,              // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times.
+    // A value of the wrong type.
+    WrongType { place: &'static str, wanted: &'static str, found: &'static str},
 }
 
 // Display is used by ``println!("{}", error)``
@@ -29,6 +71,9 @@ impl fmt::Display for Error<'_> {
             Error::Overflow => write!(f, "number too big"),
             Error::UnknownName(name) => write!(f, "'{}' is not a command or variable", name),
             Error::LoopLimit => write!(f, "loop stopped after {} rounds", MAX_LOOP_ROUNDS),
+            Error::WrongType { place, wanted, found } => {
+                write!(f, "{} needs {}, not {}", place, wanted, found)
+            },
         }
     }
 }
@@ -60,6 +105,11 @@ enum Token<'a> {
     If,
     Else,
     While,
+    Bang,
+    AndAnd,
+    OrOr,
+    True,
+    False,
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -79,12 +129,15 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             ';' => Token::Semicolon,
             '{' => Token::LeftBrace,
             '}' => Token::RightBrace,
+            '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
+            '|' if chars.next_if(|&(_, d)| d == '|').is_some() => Token::OrOr,
             '=' | '!' | '<' | '>' => {
                 // NOTE: ``==``, ``!=``, ``<=`` and ``>=`` are two characters in one token.
                 let equals_next = chars.next_if(|&(_, d)| d == '=').is_some();
                 match (c, equals_next) {
                     ('=', false) => Token::Equals,
                     ('=', true) => Token::EqualEqual,
+                    ('!', false) => Token::Bang,
                     ('!', true) => Token::NotEqual,
                     ('<', false) => Token::Less,
                     ('<', true) => Token::LessEqual,
@@ -121,6 +174,8 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     "if" => Token::If,
                     "else" => Token::Else,
                     "while" => Token::While,
+                    "true" => Token::True,
+                    "false" => Token::False,
                     name => Token::Name(name),
                 }
             }
@@ -145,29 +200,57 @@ enum Op {
     GreaterEqual,
 }
 
-// How tightly a binary operator binds.
-fn infix(token: Token<'_>) -> Option<(u8, Op)> {
+impl Op {
+    fn symbol(&self) -> &'static str {
+        match self {
+            Op::Add => "'+'",
+            Op::Subtract => "'-'",
+            Op::Multiply => "'*'",
+            Op::Divide => "'/'",
+            Op::Remainder => "'%'",
+            Op::Equal => "'=='",
+            Op::NotEqual => "'!='",
+            Op::Less => "'<'",
+            Op::LessEqual => "'<='",
+            Op::Greater => "'>'",
+            Op::GreaterEqual => "'>='",
+        }
+    }
+}
+
+enum Infix {
+    Op(Op),
+    And,
+    Or,
+}
+
+fn infix(token: Token<'_>) -> Option<(u8, Infix)> {
     Some(match token {
-        Token::EqualEqual => (1, Op::Equal),
-        Token::NotEqual => (1, Op::NotEqual),
-        Token::Less => (1, Op::Less),
-        Token::LessEqual => (1, Op::LessEqual),
-        Token::Greater => (1, Op::Greater),
-        Token::GreaterEqual => (1, Op::GreaterEqual),
-        Token::Plus => (2, Op::Add),
-        Token::Minus => (2, Op::Subtract),
-        Token::Star => (3, Op::Multiply),
-        Token::Slash => (3, Op::Divide),
-        Token::Percent => (3, Op::Remainder),
+        Token::OrOr => (1, Infix::Or),
+        Token::AndAnd => (2, Infix::And),
+        Token::EqualEqual => (3, Infix::Op(Op::Equal)),
+        Token::NotEqual => (3, Infix::Op(Op::NotEqual)),
+        Token::Less => (4, Infix::Op(Op::Less)),
+        Token::LessEqual => (4, Infix::Op(Op::LessEqual)),
+        Token::Greater => (4, Infix::Op(Op::Greater)),
+        Token::GreaterEqual => (4, Infix::Op(Op::GreaterEqual)),
+        Token::Plus => (5, Infix::Op(Op::Add)),
+        Token::Minus => (5, Infix::Op(Op::Subtract)),
+        Token::Star => (6, Infix::Op(Op::Multiply)),
+        Token::Slash => (6, Infix::Op(Op::Divide)),
+        Token::Percent => (6, Infix::Op(Op::Remainder)),
         _ => return None,
     })
 }
 
 enum Expr<'a> {
-    Number(i64),
+    Literal(Value),
     Variable(&'a str),
     Negate(Box<Expr<'a>>),
+    Not(Box<Expr<'a>>),
     Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),
+    And(Box<Expr<'a>>, Box<Expr<'a>>),
+    Or(Box<Expr<'a>>, Box<Expr<'a>>),
 }
 
 enum Stmt<'a> {
@@ -280,14 +363,19 @@ impl<'a> Parser<'a> {
     // that bind at least as tightly as `min`.
     fn binary(&mut self, min: u8) -> Result<Expr<'a>, Error<'a>> {
         let mut left = self.unary()?;
-        while let Some((precedence, op)) = self.peek().and_then(infix) {
+        while let Some((precedence, infix)) = self.peek().and_then(infix) {
             if precedence < min {
                 break;
             }
             self.pos += 1;
             // Right side only takes operators that bind tighter.
             let right = self.binary(precedence + 1)?;
-            left = Expr::Binary(op, Box::new(left), Box::new(right));
+            let (left_side, right) = (Box::new(left), Box::new(right));
+            left = match infix {
+                Infix::Op(op) => Expr::Binary(op, left_side, right),
+                Infix::And => Expr::And(left_side, right),
+                Infix::Or => Expr::Or(left_side, right),
+            };
         }
         Ok(left)
     }
@@ -297,12 +385,18 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             return Ok(Expr::Negate(Box::new(self.unary()?)));
         }
+        if self.peek() == Some(Token::Bang) {
+            self.pos += 1;
+            return Ok(Expr::Not(Box::new(self.unary()?)));
+        }
         self.primary()
     }
 
     fn primary(&mut self) -> Result<Expr<'a>, Error<'a>> {
         match self.next() {
-            Some(Token::Number(n)) => Ok(Expr::Number(n)),
+            Some(Token::Number(n)) => Ok(Expr::Literal(Value::Int64(n))),
+            Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
+            Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
             Some(Token::Name(name)) => Ok(Expr::Variable(name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
@@ -317,30 +411,54 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<i64, Error<'a>> {
+fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<Value, Error<'a>> {
     match expr {
-        Expr::Number(n) => Ok(*n),
+        Expr::Literal(value) => Ok(*value),
         Expr::Variable(name) => vars.get(*name).copied().ok_or(Error::UnknownName(name)),
-        Expr::Negate(inner) => eval(inner, vars)?.checked_neg().ok_or(Error::Overflow),
+        Expr::Negate(inner) => {
+            let n = eval(inner, vars)?.int64("'-'")?;
+            n.checked_neg().map(Value::Int64).ok_or(Error::Overflow)
+        },
+        Expr::Not(inner) => Ok(Value::Boolean(!eval(inner, vars)?.boolean("'!'")?)),
+        Expr::And(left, right) => Ok(Value::Boolean(
+            eval(left, vars)?.boolean("'&&'")? && eval(right, vars)?.boolean("'&&'")?,
+        )),
+        Expr::Or(left, right) => Ok(Value::Boolean(
+            eval(left, vars)?.boolean("'||'")? || eval(right, vars)?.boolean("'||'")?,
+        )),
         Expr::Binary(op, left, right) => {
             let a = eval(left, vars)?;
             let b = eval(right, vars)?;
+            let place = op.symbol();
+            let (a, b) = match (op, a, b) {
+                (_, Value::Int64(a), Value::Int64(b)) => (a, b),
+                (Op::Equal, Value::Boolean(a), Value::Boolean(b)) => {
+                    return Ok(Value::Boolean(a == b));
+                },
+                (Op::NotEqual, Value::Boolean(a), Value::Boolean(b)) => {
+                    return Ok(Value::Boolean(a != b));
+                }
+                (Op::Equal | Op::NotEqual, a, b) => {
+                    return Err(Error::WrongType {place, wanted: a.type_name(), found: b.type_name() });
+                },
+                _ => return Err(Error::WrongType {place, wanted: "Int64", found: "Boolean" }),
+            };
             let result = match op {
-                Op::Add => a.checked_add(b),
-                Op::Subtract => a.checked_sub(b),
-                Op::Multiply => a.checked_mul(b),
+                Op::Add => a.checked_add(b).map(Value::Int64),
+                Op::Subtract => a.checked_sub(b).map(Value::Int64),
+                Op::Multiply => a.checked_mul(b).map(Value::Int64),
                 Op::Divide | Op::Remainder if b == 0 => return Err(Error::DivideByZero),
-                Op::Divide => a.checked_div(b),
-                Op::Remainder => a.checked_rem(b),
-                Op::Equal => Some((a == b) as i64),
-                Op::NotEqual => Some((a != b) as i64),
-                Op::Less => Some((a < b) as i64),
-                Op::LessEqual => Some((a <= b) as i64),
-                Op::Greater => Some((a > b) as i64),
-                Op::GreaterEqual => Some((a >= b) as i64),
+                Op::Divide => a.checked_div(b).map(Value::Int64),
+                Op::Remainder => a.checked_rem(b).map(Value::Int64),
+                Op::Equal => Some(Value::Boolean(a == b)),
+                Op::NotEqual => Some(Value::Boolean(a != b)),
+                Op::Less => Some(Value::Boolean(a < b)),
+                Op::LessEqual => Some(Value::Boolean(a <= b)),
+                Op::Greater => Some(Value::Boolean(a > b)),
+                Op::GreaterEqual => Some(Value::Boolean(a >= b)),
             };
             result.ok_or(Error::Overflow)
-        }
+        },
     }
 }
 
@@ -348,7 +466,7 @@ const MAX_LOOP_ROUNDS: u64 = 1_000_000;
 
 // Runs statements in order. Returns the value of the last item if that
 // item is an expression or assignment.
-fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<i64>, Error<'a>> {
+fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Error<'a>> {
     let mut last = None;
     for stmt in stmts {
         last = match stmt {
@@ -364,7 +482,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<i64>, Erro
                 Some(value)
             },
             Stmt::If(condition, then_block, else_block) => {
-                if eval(condition, vars)? != 0 {
+                if eval(condition, vars)?.boolean("if")? {
                     run(then_block, vars)?;
                 } else {
                     run (else_block, vars)?;
@@ -373,7 +491,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<i64>, Erro
             },
             Stmt::While(condition, body) => {
                 let mut rounds = 0;
-                while eval(condition, vars)? != 0 {
+                while eval(condition, vars)?.boolean("while")? {
                     rounds += 1;
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
@@ -388,7 +506,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<i64>, Erro
 }
 
 // Runs a line. Returns the value to print, if any.
-pub fn evaluate<'a>(text: &'a str, vars: &mut Variables) -> Result<Option<i64>, Error<'a>> {
+pub fn evaluate<'a>(text: &'a str, vars: &mut Variables) -> Result<Option<Value>, Error<'a>> {
     let tokens = tokenize(text)?;
     let mut parser = Parser { tokens, pos: 0 };
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
