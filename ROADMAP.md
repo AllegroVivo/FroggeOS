@@ -148,7 +148,7 @@
 - **5.6** ⚑ File API shape (see the decisions table)
 - **5.7** ☆ Stage 2 finds `KERNEL.BIN` by name instead of at fixed sectors
 
-### 6. The language (the heart of TempleOS)
+### 6. The language, Ribbit (the heart of TempleOS)
 In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.0** Integer calculator: tokenizer, recursive-descent parser, syntax tree, evaluator ✅ (this is the seed of the whole language)
 - **6.1** Syntax, typing and how code runs: decided, see [LANGUAGE.md](LANGUAGE.md) ✅
@@ -171,7 +171,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.6 Commands, scripts and the library**
   - 6.6.1 A command table, argparse-style. Each command declares its arguments (positional, `-f`/`--flag`, options with values), and one shared parser checks them and generates `help <command>`. A line whose first word is a command runs it; anything else is code.
   - 6.6.2 Make kernel features available as built-ins: files (5), graphics (4), sound (3.3), tasks (2.6)
-  - 6.6.3 Run a source file, support `#include`, and run a startup script at boot
+  - 6.6.3 Run a `.rbt` source file, support `#include`, and run a startup script at boot
   - 6.6.4 Namespaces and `using`, and the built-in library as a FroggeOS source file of `extern` declarations
 - **6.7 Data and types** (the C#-style features in LANGUAGE.md)
   - 6.7.1 Arrays (`Int64[]`), `struct`, `enum`, `switch` and `foreach`
@@ -261,7 +261,7 @@ None of these need an answer up front. Each one gets decided when its milestone 
 | ID | Decision | Needed by | Recommendation |
 |---|---|---|---|
 | 6.1 | Language syntax, typing and how it runs | M2 | ✅ Decided: C#-style with CLR type names, written up in LANGUAGE.md. Interpret first, compile in M8. |
-| 6.2 | The language's name (the crate needs one) | M2 | Your call |
+| 6.2 | The language's name | M2 | ✅ Decided: Ribbit. Scripts are `.rbt` files, and the crate is `ribbit`. |
 | 2.4.6 | Address-space model | M3 | One identity-mapped address space, everything in ring 0, like TempleOS. Much simpler, and Rust's safety helps make up for it. |
 | 5.1 / 5.2.1 | Disk layout and filesystem | M4 | A fixed layout (boot, kernel, then filesystem) with our own simple RedSea-like filesystem. `mkimage` covers getting files in from Windows, so FAT isn't needed. |
 | 5.6 | File API | M4 | Whole-file `read_file`/`write_file`, like TempleOS |

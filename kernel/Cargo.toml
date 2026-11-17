@@ -11,4 +11,4 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-lang = { path = "../lang" }
+ribbit = { path = "../ribbit" }

@@ -1,4 +1,4 @@
-use lang::calc::{Variables, evaluate};
+use ribbit::calc::{Variables, evaluate};
 
 // Types the lines into one shell session and checks what the
 // shell would print after each one.

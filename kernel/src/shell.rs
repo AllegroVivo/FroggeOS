@@ -3,7 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
-use lang::calc;
+use ribbit::calc;
 
 use crate::{heap, keyboard, timer, vga};
 use crate::{print, println};

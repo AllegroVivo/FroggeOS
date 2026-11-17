@@ -1,6 +1,6 @@
-# The FroggeOS language
+# Ribbit: the FroggeOS language
 
-**Status (2026-11-17):** design decided (roadmap ⚑ 6.1). Apart from the calculator, none of this is built yet. The language's name is still open (§12).
+**Status (2026-11-17):** design decided (roadmap ⚑ 6.1). Apart from the calculator, none of this is built yet. Ribbit scripts are `.rbt` files, and the Rust crate is `ribbit`.
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
@@ -270,7 +270,7 @@ unsafe Void PutChar(Int64 col, Int64 row, Char c)
 - **`volatile`** also works on what a pointer points at, so hardware registers are always really read and written. C# doesn't allow that.
 - **Ring 0:** all code still runs in ring 0, as in TempleOS. `unsafe` and `private` are rules the compiler checks, not protection the CPU enforces.
 
-**Namespaces.** `namespace Gfx { ... }` groups names, which you then use as `Gfx.Line(...)`. `using Gfx;` lets you write `Line(...)`, and a `using` typed at the prompt lasts for the session. A file can pull in another with `#include "file"` (6.6.3), which is a directive rather than a keyword.
+**Namespaces.** `namespace Gfx { ... }` groups names, which you then use as `Gfx.Line(...)`. `using Gfx;` lets you write `Line(...)`, and a `using` typed at the prompt lasts for the session. A file can pull in another with `#include "gfx.rbt"` (6.6.3), which is a directive rather than a keyword.
 
 Built-in namespaces, first draft (they grow with the roadmap):
 
@@ -302,7 +302,6 @@ Step IDs are from [ROADMAP.md](ROADMAP.md).
 
 | What | Needed by |
 |---|---|
-| The language's name (the crate in 6.2 needs one) | 6.2 |
 | How generics compile: one copy per type, or one shared copy | 6.7.7 / 6.8 |
 | Reference-count cycles: weak references or a cycle collector | 6.7.9 |
 | What `async`/`await` means on top of FroggeOS tasks. C#'s `Task` type also clashes with the kernel's Task (2.6). | 6.7.10 |
