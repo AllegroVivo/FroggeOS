@@ -4,7 +4,7 @@
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
-**Today's calculator is different in two ways** that change on the way: variables are untyped (`x = 5`), and `;` can be left off before `}` or at the end of a line. Steps 6.3.5 and 6.4.4 in [ROADMAP.md](ROADMAP.md) bring it in line with this document.
+**Today's calculator is different in one way** that changes on the way: `;` can be left off before `}` or at the end of a line. Step 6.4.4 in [ROADMAP.md](ROADMAP.md) brings it in line with this document.
 
 **On size:** this is most of C#, plus pointers. A C# compiler is a large program, so each feature has its own roadmap step, and milestone M2 only needs the small core (§11). The costliest features are generics, `async`/`await`, `yield`, and exceptions in the x86 compiler (6.8).
 
@@ -140,6 +140,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 ## 6. Statements
 
 - **Declarations:** `Int64 x = 5;`, `var w = new Window();` (`var` takes the type from the right-hand side) and `const Int64 Max = 10;`
+  - For now, declaring a name again replaces it. Once blocks have their own scope (6.4.1), that becomes an error within one scope, as in C#.
 - **Assignment:** `x = e;`, `x += e;` (and `-= *= /= %= &= |= ^= <<= >>=`), `x++;` and `x--;`
   - These are statements only in version 1. C# also allows them inside expressions (`a[i++]`), and adding that later won't break existing code.
 - **Branches and loops:** `if (c) { } else if (c) { } else { }`, `while (c) { }`, `do { } while (c);`, `for (init; cond; step) { }` and `foreach (T x in seq) { }`

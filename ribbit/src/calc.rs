@@ -15,11 +15,15 @@ pub enum Value {
 }
 
 impl Value {
-    fn type_name(self) -> &'static str {
+    fn type_of(self) -> Type {
         match self {
-            Value::Int64(_) => "Int64",
-            Value::Boolean(_) => "Boolean",
+            Value::Int64(_) => Type::Int64,
+            Value::Boolean(_) => Type::Boolean,
         }
+    }
+
+    pub fn type_name(self) -> &'static str {
+        self.type_of().name()
     }
 
     fn int64<'a>(self, place: &'static str) -> Result<i64, Error<'a>> {
@@ -47,8 +51,39 @@ impl fmt::Display for Value {
     }
 }
 
-// Values stored from ``name = expression``.
-pub type Variables = BTreeMap<String, Value>;
+// Available types to declare a variable with.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Type {
+    Int64,
+    Boolean,
+}
+
+impl Type {
+    fn name(self) -> &'static str {
+        match self {
+            Type::Int64 => "Int64",
+            Type::Boolean => "Boolean",
+        }
+    }
+
+    // The value of a variable declared with no assignment.
+    fn zero(self) -> Value {
+        match self {
+            Type::Int64 => Value::Int64(0),
+            Type::Boolean => Value::Boolean(false),
+        }
+    }
+}
+
+// A single declared variable.
+pub struct Variable {
+    pub value: Value,
+    pub constant: bool,
+
+}
+
+// All declared variables by name.
+pub type Variables = BTreeMap<String, Variable>;
 
 pub enum Error<'a> {
     BadChar(char),          // a character that isn't part of any token
@@ -56,9 +91,13 @@ pub enum Error<'a> {
     DivideByZero,
     Overflow,               // a number or result is too big for an i64
     UnknownName(&'a str),   // a name with no value stored under it
-    LoopLimit,              // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times.
+    LoopLimit,              // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times
     // A value of the wrong type.
     WrongType { place: &'static str, wanted: &'static str, found: &'static str},
+    Undeclared(&'a str),    // assigning to a name that was not declared
+    Constant(&'a str),      // assigning to a const
+    // Attempting to store the wrong type into a variable.
+    VariableType { name: &'a str, wanted: &'static str, found: &'static str },
 }
 
 // Display is used by ``println!("{}", error)``
@@ -73,6 +112,11 @@ impl fmt::Display for Error<'_> {
             Error::LoopLimit => write!(f, "loop stopped after {} rounds", MAX_LOOP_ROUNDS),
             Error::WrongType { place, wanted, found } => {
                 write!(f, "{} needs {}, not {}", place, wanted, found)
+            },
+            Error::Undeclared(name) => write!(f, "'{}' isn't declared", name),
+            Error::Constant(name) => write!(f, "'{}' is a constant", name),
+            Error::VariableType { name, wanted, found } => {
+                write!(f, "'{}' needs {}, not {}", name, wanted, found)
             },
         }
     }
@@ -110,6 +154,9 @@ enum Token<'a> {
     OrOr,
     True,
     False,
+    Var,
+    Const,
+    Type(Type),
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -176,6 +223,10 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     "while" => Token::While,
                     "true" => Token::True,
                     "false" => Token::False,
+                    "var" => Token::Var,
+                    "const" => Token::Const,
+                    "Int64" => Token::Type(Type::Int64),
+                    "Boolean" => Token::Type(Type::Boolean),
                     name => Token::Name(name),
                 }
             }
@@ -256,6 +307,7 @@ enum Expr<'a> {
 enum Stmt<'a> {
     Expr(Expr<'a>),
     Assign(&'a str, Expr<'a>),
+    Declare { name: &'a str, ty: Option<Type>, value: Expr<'a>, constant: bool },
     If(Expr<'a>, Vec<Stmt<'a>>, Vec<Stmt<'a>>), // condition, then, else
     While(Expr<'a>, Vec<Stmt<'a>>),             // condition, body
 }
@@ -332,12 +384,37 @@ impl<'a> Parser<'a> {
                 let body = self.block()?;
                 Ok(Stmt::While(condition, body))
             },
+            (Some(Token::Type(_) | Token::Var | Token::Const), _) => self.declaration(),
             (Some(Token::Name(name)), Some(Token::Equals)) => {
                 self.pos += 2;
                 Ok(Stmt::Assign(name, self.expression()?))
             },
             _ => Ok(Stmt::Expr(self.expression()?))
         }
+    }
+
+    fn declaration(&mut self) -> Result<Stmt<'a>, Error<'a>> {
+        let constant = self.peek() == Some(Token::Const);
+        if constant {
+            self.pos += 1;
+        }
+        let ty = match self.next() {
+            Some(Token::Type(ty)) => Some(ty),
+            Some(Token::Var) if !constant => None,
+            _ => return Err(Error::Syntax("expected a type")),
+        };
+        let Some(Token::Name(name)) = self.next() else {
+            return Err(Error::Syntax("expected a name"));
+        };
+        let value = match (self.peek(), ty) {
+            (Some(Token::Equals), _) => {
+                self.pos += 1;
+                self.expression()?
+            }
+            (_, Some(ty)) if !constant => Expr::Literal(ty.zero()),
+            _ => return Err(Error::Syntax("expected '='")),
+        };
+        Ok(Stmt::Declare {name, ty, value, constant })
     }
 
     // The condition of an ``if`` or ``while``.
@@ -414,7 +491,9 @@ impl<'a> Parser<'a> {
 fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<Value, Error<'a>> {
     match expr {
         Expr::Literal(value) => Ok(*value),
-        Expr::Variable(name) => vars.get(*name).copied().ok_or(Error::UnknownName(name)),
+        Expr::Variable(name) => {
+            vars.get(*name).map(|variable| variable.value).ok_or(Error::UnknownName(name))
+        },
         Expr::Negate(inner) => {
             let n = eval(inner, vars)?.int64("'-'")?;
             n.checked_neg().map(Value::Int64).ok_or(Error::Overflow)
@@ -471,14 +550,28 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Er
     for stmt in stmts {
         last = match stmt {
             Stmt::Expr(expr) => Some(eval(expr, vars)?),
+            Stmt::Declare {name, ty, value, constant } => {
+                let value = eval(value, vars)?;
+                let ty = ty.unwrap_or(value.type_of());
+                if value.type_of() != ty {
+                    return Err(Error::VariableType { name, wanted: ty.name(), found: value.type_name() });
+                }
+                vars.insert(String::from(*name), Variable { value, constant: *constant });
+                Some(value)
+            },
             Stmt::Assign(name, expr) => {
                 let value = eval(expr, vars)?;
-                match vars.get_mut(*name) {
-                    Some(slot) => *slot = value,
-                    None => {
-                        vars.insert(String::from(*name), value);
-                    }
+                let Some(variable) = vars.get_mut(*name) else {
+                    return Err(Error::Undeclared(name));
+                };
+                if variable.constant {
+                    return Err(Error::Constant(name));
                 }
+                if value.type_of() != variable.value.type_of() {
+                    let wanted = variable.value.type_name();
+                    return Err(Error::VariableType { name, wanted, found: value.type_name() });
+                }
+                variable.value = value;
                 Some(value)
             },
             Stmt::If(condition, then_block, else_block) => {

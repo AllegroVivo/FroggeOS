@@ -60,12 +60,12 @@ fn syntax_errors() {
 #[test]
 fn variables() {
     check(&[
-        ("x = 6 * 7", "42"),
+        ("Int64 x = 6 * 7", "42"),
         ("x + 1", "43"),
-        ("y = x - 2", "40"),
+        ("Int64 y = x - 2", "40"),
         ("x = x + 1", "43"),
         ("(x + y) * 2", "166"),
-        ("Big_1 = 10", "10"),
+        ("Int64 Big_1 = 10", "10"),
         ("big_1", "Error: 'big_1' is not a command or variable"), // case matters
         ("z + 1", "Error: 'z' is not a command or variable"),
         // A line that fails changes nothing.
@@ -78,13 +78,51 @@ fn variables() {
 }
 
 #[test]
+fn declarations() {
+    check(&[
+        ("Int64 n = 5", "5"),
+        ("Boolean done = n > 3", "True"),
+        ("Int64 count", "0"), // everything starts zeroed
+        ("Boolean flag", "False"),
+        ("var total = n * 2", "10"), // var takes the type from the value
+        ("var big = total > 5", "True"),
+        ("const Int64 Max = 100", "100"),
+        ("total = Max + 1", "101"),
+        ("y = 5", "Error: 'y' isn't declared"),
+        ("Max = 101", "Error: 'Max' is a constant"),
+        ("Max", "100"),
+        // A variable keeps its type, including one that var picked.
+        ("n = true", "Error: 'n' needs Int64, not Boolean"),
+        ("big = 1", "Error: 'big' needs Boolean, not Int64"),
+        ("Int64 bad = false", "Error: 'bad' needs Int64, not Boolean"),
+        ("bad", "Error: 'bad' is not a command or variable"), // it wasn't declared
+        // Declaring a name again replaces it, until blocks get their own scope.
+        ("Boolean n = true", "True"),
+        ("n = false", "False"),
+    ]);
+}
+
+#[test]
+fn declaration_errors() {
+    check(&[
+        ("var v", "Error: expected '='"),
+        ("const Int64 C", "Error: expected '='"),
+        ("const var c = 1", "Error: expected a type"),
+        ("Int64 5 = 3", "Error: expected a name"),
+        ("Int64 if = 3", "Error: expected a name"),
+        ("Int64 = 5", "Error: expected a name"),
+        ("Int64 x 5", "Error: expected ';'"),
+    ]);
+}
+
+#[test]
 fn mistyped_commands() {
     check(&[
         ("hepl", "Error: 'hepl' is not a command or variable"),
         ("ecoh hi", "Error: 'ecoh' is not a command or variable"),
         ("foo =", "Error: unexpected end of input"),
         // Once x is a variable, `x y` is a syntax error, not a mistyped command.
-        ("x = 5", "5"),
+        ("Int64 x = 5", "5"),
         ("x y", "Error: expected ';'"),
     ]);
 }
@@ -100,7 +138,7 @@ fn comparisons() {
         ("2 != 2", "False"),
         ("1 + 2 == 3", "True"), // + comes before ==
         ("true == 1 < 2", "True"), // < comes before ==, as in C#
-        ("big = 7 > 3", "True"),
+        ("Boolean big = 7 > 3", "True"),
         ("big == false", "False"),
         // A comparison gives a Boolean, and a Boolean isn't a number.
         ("(1 < 2) + (3 < 4)", "Error: '+' needs Int64, not Boolean"),
@@ -121,7 +159,7 @@ fn booleans() {
         ("true || true && false", "True"), // && comes before ||
         ("1 < 2 && 2 < 3", "True"),
         ("!(1 > 2)", "True"),
-        ("t = true; f = !t; t != f", "True"),
+        ("var t = true; var f = !t; t != f", "True"),
         ("!1", "Error: '!' needs Boolean, not Int64"),
         ("-true", "Error: '-' needs Int64, not Boolean"),
         ("true + 1", "Error: '+' needs Int64, not Boolean"),
@@ -136,7 +174,7 @@ fn short_circuit() {
         ("false && 1 / 0 == 0", "False"),
         ("true || 1 / 0 == 0", "True"),
         ("true && 1 / 0 == 0", "Error: division by zero"),
-        ("x = 0; x != 0 && 10 / x > 1", "False"),
+        ("Int64 x = 0; x != 0 && 10 / x > 1", "False"),
         // Types are only checked while running (a checking pass is 6.7.3),
         // so a skipped right side isn't checked either.
         ("false && 5", "False"),
@@ -146,7 +184,7 @@ fn short_circuit() {
 #[test]
 fn statements() {
     check(&[
-        ("x = 1; y = 2; x + y", "3"),
+        ("Int64 x = 1; Int64 y = 2; x + y", "3"),
         ("x = 1;", "1"),
         (";", ""),
         ("x = 1 y = 2", "Error: expected ';'"),
@@ -157,13 +195,13 @@ fn statements() {
 #[test]
 fn if_else() {
     check(&[
-        ("x = 5; if (x > 3) { y = 1 } else { y = 2 }", ""),
+        ("Int64 x = 5; Int64 y; if (x > 3) { y = 1 } else { y = 2 }", ""),
         ("y", "1"),
         ("if (x > 9) { y = 1 } else { y = 2 }; y", "2"),
-        ("if (false) { z = 1 }; z", "Error: 'z' is not a command or variable"),
+        ("Int64 z; if (false) { z = 1 }; z", "0"),
         ("if (true) { z = 1 }; z", "1"),
         ("if (1) { z = 2 }", "Error: if needs Boolean, not Int64"), // write (x != 0)
-        ("n = 7; if (n < 5) { c = 1 } else if (n < 10) { c = 2 } else { c = 3 }; c", "2"),
+        ("Int64 n = 7; Int64 c; if (n < 5) { c = 1 } else if (n < 10) { c = 2 } else { c = 3 }; c", "2"),
         ("if x > 1 { y = 1 }", "Error: expected '(' after if or while"),
         ("if (1 > 0 { 2 }", "Error: expected ')'"),
         ("if (1) y = 1", "Error: expected '{'"),
@@ -176,7 +214,7 @@ fn if_else() {
 #[test]
 fn while_loops() {
     check(&[
-        ("i = 0; s = 0; while (i < 10) { i = i + 1; s = s + i }; s", "55"),
+        ("Int64 i = 0; Int64 s = 0; while (i < 10) { i = i + 1; s = s + i }; s", "55"),
         ("i = 0; while (i < 1000000) { i = i + 1 }; i", "1000000"), // just fits
         ("while (true) {}", "Error: loop stopped after 1000000 rounds"),
         ("while (1) {}", "Error: while needs Boolean, not Int64"),
@@ -191,8 +229,8 @@ fn nesting() {
     // 38 brackets deep is the most that fits in a 78-character shell line.
     let deep = format!("{}1{}", "(".repeat(38), ")".repeat(38));
     check(&[
-        ("a=0;b=0;while(a<3){a=a+1;if(a==2){b=b+10}else{b=b+1}};b", "12"),
-        ("i=0;t=0;while(i<3){j=0;while(j<4){t=t+1;j=j+1};i=i+1};t", "12"),
+        ("var a=0;var b=0;while(a<3){a=a+1;if(a==2){b=b+10}else{b=b+1}};b", "12"),
+        ("var i=0;var t=0;while(i<3){var j=0;while(j<4){t=t+1;j=j+1};i=i+1};t", "12"),
         (&deep, "1"),
     ]);
 }

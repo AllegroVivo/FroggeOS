@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-17):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which so far has Int64 and Boolean values, variables, comparisons, `&&` `||` `!`, `if`/`else` and `while`, and lives in its own crate with `cargo test` tests. The kernel is 69 KB of its 128 KB budget.
+**Status (2026-11-17):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which so far has Int64 and Boolean values, typed declarations (`Int64`, `Boolean`, `var`, `const`), comparisons, `&&` `||` `!`, `if`/`else` and `while`, and lives in its own crate with `cargo test` tests. The kernel is 71 KB of its 128 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -158,7 +158,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
   - 6.3.2 Variables and assignment that persist between shell lines (a symbol table), plus a `vars` command ✅
   - 6.3.3 Strings and characters: `String`, a 1-byte `Char`, escapes, and `$"..."` interpolation
   - 6.3.4 Error messages with line and column, and a caret under the problem
-  - 6.3.5 Typed declarations (`Int64 x = 5;`, `var`, `const`) and a strict `Boolean` type with `true`/`false` ✅. Assigning to an undeclared name becomes an error.
+  - 6.3.5 Typed declarations (`Int64 x = 5;`, `var`, `const`) and a strict `Boolean` type with `true`/`false`. Assigning to an undeclared name becomes an error. ✅
 - **6.4 Statements**
   - 6.4.1 Statement lists, `;` and `{ }` blocks ✅. Still to do: each block gets its own scope
   - 6.4.2 `if`/`else` ✅, `while` ✅, `for`, `break`/`continue`

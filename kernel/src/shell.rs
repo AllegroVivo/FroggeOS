@@ -76,7 +76,8 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
             println!("a < b        compare, giving True or False (also == != <= > >=)");
             println!("a && b       and: both true; also a || b (or: either one) and !a (not)");
-            println!("x = <expr>   store the result as x, e.g. x = 6 * 7, then x + 1");
+            println!("Int64 x = 5  declare x; also Boolean b = true, var y = x + 1, const Int64 N = 3");
+            println!("x = <expr>   change a declared variable, e.g. x = x + 1");
             println!("a; b         do a, then b");
             // println! requires `{{` and `}}` to print single `{` and `}`.
             println!("if (x) {{}}    run the block if x is true: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
@@ -104,8 +105,9 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             );
         },
         "vars" => {
-            for (name, value) in vars.iter() {
-                println!("{} = {}", name, value);
+            for (name, variable) in vars.iter() {
+                let constant = if variable.constant { "const " } else { "" };
+                println!("{}{} {} = {}", constant, variable.value.type_name(), name, variable.value);
             }
         },
         _ => match calc::evaluate(line, vars) {
