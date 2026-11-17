@@ -85,19 +85,56 @@ pub struct Variable {
 // All declared variables by name.
 pub type Variables = BTreeMap<String, Variable>;
 
+// Variables seen by the currently executing code.
+struct Env<'a, 'v> {
+    globals: &'v mut Variables,
+    locals: Vec<(&'a str, Variable)>,
+    depth: usize,
+}
+
+impl<'a> Env<'a, '_> {
+    fn get(&self, name: &str) -> Option<&Variable> {
+        match self.locals.iter().rev().find(|(local, _)| *local == name) {
+            Some((_, variable)) => Some(variable),
+            None => self.globals.get(name),
+        }
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut Variable> {
+        match self.locals.iter_mut().rev().find(|(local, _)| *local == name) {
+            Some((_, variable)) => Some(variable),
+            None => self.globals.get_mut(name),
+        }
+    }
+
+    fn declare(&mut self, name: &'a str, variable: Variable) -> Result<(), Error<'a>> {
+        if self.depth == 0 {
+            // Declared at the prompt. Replaces any existing variable.
+            self.globals.insert(String::from(name), variable);
+        } else if self.locals.iter().any(|(local, _)| *local == name) {
+            // Redeclared inside a block. Not allowed.
+            return Err(Error::AlreadyDeclared(name));
+        } else {
+            self.locals.push((name, variable));
+        }
+        Ok(())
+    }
+}
+
 pub enum Error<'a> {
-    BadChar(char),          // a character that isn't part of any token
-    Syntax(&'static str),   // the tokens don't form an expression
+    BadChar(char),              // a character that isn't part of any token
+    Syntax(&'static str),       // the tokens don't form an expression
     DivideByZero,
-    Overflow,               // a number or result is too big for an i64
-    UnknownName(&'a str),   // a name with no value stored under it
-    LoopLimit,              // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times
+    Overflow,                   // a number or result is too big for an i64
+    UnknownName(&'a str),       // a name with no value stored under it
+    LoopLimit,                  // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times
     // A value of the wrong type.
     WrongType { place: &'static str, wanted: &'static str, found: &'static str},
-    Undeclared(&'a str),    // assigning to a name that was not declared
-    Constant(&'a str),      // assigning to a const
+    Undeclared(&'a str),        // assigning to a name that was not declared
+    Constant(&'a str),          // assigning to a const
     // Attempting to store the wrong type into a variable.
     VariableType { name: &'a str, wanted: &'static str, found: &'static str },
+    AlreadyDeclared(&'a str)    // a name is previously declared within a context
 }
 
 // Display is used by ``println!("{}", error)``
@@ -115,6 +152,7 @@ impl fmt::Display for Error<'_> {
             },
             Error::Undeclared(name) => write!(f, "'{}' isn't declared", name),
             Error::Constant(name) => write!(f, "'{}' is a constant", name),
+            Error::AlreadyDeclared(name) => write!(f, "'{}' is already declared", name),
             Error::VariableType { name, wanted, found } => {
                 write!(f, "'{}' needs {}, not {}", name, wanted, found)
             },
@@ -488,7 +526,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn eval<'a>(expr: &Expr<'a>, vars: &Variables) -> Result<Value, Error<'a>> {
+fn eval<'a>(expr: &Expr<'a>, vars: &Env<'a, '_>) -> Result<Value, Error<'a>> {
     match expr {
         Expr::Literal(value) => Ok(*value),
         Expr::Variable(name) => {
@@ -545,7 +583,7 @@ const MAX_LOOP_ROUNDS: u64 = 1_000_000;
 
 // Runs statements in order. Returns the value of the last item if that
 // item is an expression or assignment.
-fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Error<'a>> {
+fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, Error<'a>> {
     let mut last = None;
     for stmt in stmts {
         last = match stmt {
@@ -556,7 +594,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Er
                 if value.type_of() != ty {
                     return Err(Error::VariableType { name, wanted: ty.name(), found: value.type_name() });
                 }
-                vars.insert(String::from(*name), Variable { value, constant: *constant });
+                vars.declare(name, Variable { value, constant: *constant })?;
                 Some(value)
             },
             Stmt::Assign(name, expr) => {
@@ -576,9 +614,9 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Er
             },
             Stmt::If(condition, then_block, else_block) => {
                 if eval(condition, vars)?.boolean("if")? {
-                    run(then_block, vars)?;
+                    run_block(then_block, vars)?;
                 } else {
-                    run (else_block, vars)?;
+                    run_block(else_block, vars)?;
                 }
                 None
             },
@@ -589,13 +627,23 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Variables) -> Result<Option<Value>, Er
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
                     }
-                    run(body, vars)?;
+                    run_block(body, vars)?;
                 }
                 None
             }
         }
     }
     Ok(last)
+}
+
+// Runs statements within a { } block.
+fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<(), Error<'a>> {
+    let start = vars.locals.len();
+    vars.depth += 1;
+    run(stmts, vars)?;
+    vars.depth -= 1;
+    vars.locals.truncate(start);
+    Ok(())
 }
 
 // Runs a line. Returns the value to print, if any.
@@ -615,5 +663,6 @@ pub fn evaluate<'a>(text: &'a str, vars: &mut Variables) -> Result<Option<Value>
     if parser.pos < parser.tokens.len() {
         return Err(Error::Syntax("unexpected '}'"));
     }
-    run(&program, vars)
+    let mut env = Env { globals: vars, locals: Vec::new(), depth: 0 };
+    run(&program, &mut env)
 }

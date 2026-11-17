@@ -140,7 +140,8 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 ## 6. Statements
 
 - **Declarations:** `Int64 x = 5;`, `var w = new Window();` (`var` takes the type from the right-hand side) and `const Int64 Max = 10;`
-  - For now, declaring a name again replaces it. Once blocks have their own scope (6.4.1), that becomes an error within one scope, as in C#.
+  - At the prompt, declaring a name again replaces it, as in C#'s interactive window.
+  - Inside a block, as in C#, a name can't be declared twice or reuse the name of an enclosing block's variable. A block may hide a variable from the prompt until its `}`, the way a C# local can hide a field.
 - **Assignment:** `x = e;`, `x += e;` (and `-= *= /= %= &= |= ^= <<= >>=`), `x++;` and `x--;`
   - These are statements only in version 1. C# also allows them inside expressions (`a[i++]`), and adding that later won't break existing code.
 - **Branches and loops:** `if (c) { } else if (c) { } else { }`, `while (c) { }`, `do { } while (c);`, `for (init; cond; step) { }` and `foreach (T x in seq) { }`

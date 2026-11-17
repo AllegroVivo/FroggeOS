@@ -96,7 +96,7 @@ fn declarations() {
         ("big = 1", "Error: 'big' needs Boolean, not Int64"),
         ("Int64 bad = false", "Error: 'bad' needs Int64, not Boolean"),
         ("bad", "Error: 'bad' is not a command or variable"), // it wasn't declared
-        // Declaring a name again replaces it, until blocks get their own scope.
+        // At the prompt, declaring a name again replaces it.
         ("Boolean n = true", "True"),
         ("n = false", "False"),
     ]);
@@ -112,6 +112,36 @@ fn declaration_errors() {
         ("Int64 if = 3", "Error: expected a name"),
         ("Int64 = 5", "Error: expected a name"),
         ("Int64 x 5", "Error: expected ';'"),
+    ]);
+}
+
+#[test]
+fn block_scope() {
+    check(&[
+        // A block's variables end at its `}`.
+        ("if (true) { Int64 t = 1 }; t", "Error: 't' is not a command or variable"),
+        ("Int64 n = 0; while (n < 3) { Int64 sq = n * n; n = n + 1 }; n", "3"),
+        ("sq", "Error: 'sq' is not a command or variable"),
+        // Code in a block can see and change the prompt's variables.
+        ("Int64 x = 1; if (true) { x = 5 }; x", "5"),
+        // A block may hide a prompt variable until its `}`, like a C# local
+        // hiding a field.
+        ("Int64 seen = 0; if (true) { Int64 x = 9; seen = x }; seen", "9"),
+        ("x", "5"),
+        // An inner block can see an enclosing block's variables...
+        ("Int64 r = 0; if (true) { Int64 a = 2; if (true) { r = a * 10 } }; r", "20"),
+        // ...but, as in C#, can't reuse their names, and a block can't declare
+        // the same name twice.
+        ("if (true) { Int64 a = 1; if (true) { Int64 a = 2 } }", "Error: 'a' is already declared"),
+        ("if (true) { Int64 a = 1; Int64 a = 2 }", "Error: 'a' is already declared"),
+        // Sibling blocks can reuse a name, because the first one's is gone.
+        ("if (true) { Int64 a = 1 } else { Int64 a = 2 }; if (true) { Int64 a = 3 }", ""),
+        // Each round of a loop is a fresh block.
+        ("Int64 s = 0; Int64 i = 0; while (i < 4) { Int64 d = i * 2; s = s + d; i = i + 1 }; s", "12"),
+        ("if (true) { const Int64 K = 3; K = 4 }", "Error: 'K' is a constant"),
+        // A block that fails leaves nothing behind.
+        ("if (true) { Int64 q = 1; q = 1 / 0 }", "Error: division by zero"),
+        ("q", "Error: 'q' is not a command or variable"),
     ]);
 }
 
