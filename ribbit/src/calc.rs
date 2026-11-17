@@ -145,6 +145,24 @@ enum Op {
     GreaterEqual,
 }
 
+// How tightly a binary operator binds.
+fn infix(token: Token<'_>) -> Option<(u8, Op)> {
+    Some(match token {
+        Token::EqualEqual => (1, Op::Equal),
+        Token::NotEqual => (1, Op::NotEqual),
+        Token::Less => (1, Op::Less),
+        Token::LessEqual => (1, Op::LessEqual),
+        Token::Greater => (1, Op::Greater),
+        Token::GreaterEqual => (1, Op::GreaterEqual),
+        Token::Plus => (2, Op::Add),
+        Token::Minus => (2, Op::Subtract),
+        Token::Star => (3, Op::Multiply),
+        Token::Slash => (3, Op::Divide),
+        Token::Percent => (3, Op::Remainder),
+        _ => return None,
+    })
+}
+
 enum Expr<'a> {
     Number(i64),
     Variable(&'a str),
@@ -255,50 +273,23 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr<'a>, Error<'a>> {
-        let mut left = self.sum()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::EqualEqual) => Op::Equal,
-                Some(Token::NotEqual) => Op::NotEqual,
-                Some(Token::Less) => Op::Less,
-                Some(Token::LessEqual) => Op::LessEqual,
-                Some(Token::Greater) => Op::Greater,
-                Some(Token::GreaterEqual) => Op::GreaterEqual,
-                _ => return Ok(left),
-            };
-            self.pos += 1;
-            let right = self.sum()?;
-            left = Expr::Binary(op, Box::new(left), Box::new(right));
-        }
+        self.binary(1)
     }
 
-    fn sum(&mut self) -> Result<Expr<'a>, Error<'a>> {
-        let mut left = self.term()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::Plus) => Op::Add,
-                Some(Token::Minus) => Op::Subtract,
-                _ => return Ok(left),
-            };
-            self.pos += 1;
-            let right = self.term()?;
-            left = Expr::Binary(op, Box::new(left), Box::new(right));
-        }
-    }
-
-    fn term(&mut self) -> Result<Expr<'a>, Error<'a>> {
+    // Reads operands joined by binary operators, but only operators
+    // that bind at least as tightly as `min`.
+    fn binary(&mut self, min: u8) -> Result<Expr<'a>, Error<'a>> {
         let mut left = self.unary()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::Star) => Op::Multiply,
-                Some(Token::Slash) => Op::Divide,
-                Some(Token::Percent) => Op::Remainder,
-                _ => return Ok(left),
-            };
+        while let Some((precedence, op)) = self.peek().and_then(infix) {
+            if precedence < min {
+                break;
+            }
             self.pos += 1;
-            let right = self.unary()?;
+            // Right side only takes operators that bind tighter.
+            let right = self.binary(precedence + 1)?;
             left = Expr::Binary(op, Box::new(left), Box::new(right));
         }
+        Ok(left)
     }
 
     fn unary(&mut self) -> Result<Expr<'a>, Error<'a>> {
