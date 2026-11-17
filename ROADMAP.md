@@ -151,29 +151,39 @@
 ### 6. The language (the heart of TempleOS)
 In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.0** Integer calculator: tokenizer, recursive-descent parser, syntax tree, evaluator ✅ (this is the seed of the whole language)
-- **6.1** ⚑ Syntax, typing and how code runs (see the decisions table)
+- **6.1** Syntax, typing and how code runs: decided, see [LANGUAGE.md](LANGUAGE.md) ✅
 - **6.2** Move the language into its own `no_std` library crate, so `cargo test` runs it on Windows without QEMU
 - **6.3 Expressions**
   - 6.3.1 Comparisons ✅, `&&` `||` `!`, bitwise operators, shifts, `%` ✅, hex literals
   - 6.3.2 Variables and assignment that persist between shell lines (a symbol table), plus a `vars` command ✅
-  - 6.3.3 Strings and characters
+  - 6.3.3 Strings and characters: `String`, a 1-byte `Char`, escapes, and `$"..."` interpolation
   - 6.3.4 Error messages with line and column, and a caret under the problem
+  - 6.3.5 Typed declarations (`Int64 x = 5;`, `var`, `const`) and a strict `Boolean` type with `true`/`false`. Assigning to an undeclared name becomes an error.
 - **6.4 Statements**
   - 6.4.1 Statement lists, `;`, `{ }` blocks with their own scope
   - 6.4.2 `if`/`else`, `while`, `for`, `break`/`continue`
   - 6.4.3 Multi-line input: the shell keeps reading until the braces balance
+  - 6.4.4 Make `;` required (LANGUAGE.md §6), and add `do`/`while` and `assert`
 - **6.5 Functions**
   - 6.5.1 Definitions, parameters, return values, recursion
   - 6.5.2 Call frames and local scopes, plus a recursion limit so `f(){f();}` reports an error instead of overflowing the kernel stack
-  - 6.5.3 Built-in functions written in Rust: `Print`, `Beep`, `Sleep`, `Ticks`, …
-- **6.6 The shell becomes the language**
-  - 6.6.1 Commands become function calls, TempleOS-style: `Dir;`, `Cd("/docs");`
+  - 6.5.3 Built-in functions written in Rust, with .NET-style names: `Console.WriteLine`, `Speaker.Beep`, `Timer.Sleep`, `Timer.Uptime`, …
+- **6.6 Commands, scripts and the library**
+  - 6.6.1 A command table, argparse-style. Each command declares its arguments (positional, `-f`/`--flag`, options with values), and one shared parser checks them and generates `help <command>`. A line whose first word is a command runs it; anything else is code.
   - 6.6.2 Make kernel features available as built-ins: files (5), graphics (4), sound (3.3), tasks (2.6)
   - 6.6.3 Run a source file, support `#include`, and run a startup script at boot
-- **6.7 Data and types**
-  - 6.7.1 Arrays, then structs (HolyC calls them classes)
-  - 6.7.2 ⚑ Raw pointers and direct memory access (see the decisions table)
+  - 6.6.4 Namespaces and `using`, and the built-in library as a FroggeOS source file of `extern` declarations
+- **6.7 Data and types** (the C#-style features in LANGUAGE.md)
+  - 6.7.1 Arrays (`Int64[]`), `struct`, `enum`, `switch` and `foreach`
+  - 6.7.2 Raw pointers inside `unsafe`: `T*`, `&`, `*`, `->`, `fixed`, `sizeof`, `volatile`
   - 6.7.3 A type-checking pass
+  - 6.7.4 Classes: `new`, `null`, `this`, constructors, `static`, `readonly`, `public`/`private`/`protected`, freed by reference counting
+  - 6.7.5 Interfaces and inheritance: `virtual`, `override`, `abstract`, `sealed`, `base`, `is`, `as`, `typeof`
+  - 6.7.6 Delegates and `=>` lambdas, plus `params`, `ref`, `out` and `operator`
+  - 6.7.7 ⚑ Generics (`List<T>`, `Dictionary<K, V>`, your own `class Stack<T>`, `where`), then `yield` and `IEnumerable<T>`
+  - 6.7.8 Exceptions (`try`/`catch`/`finally`/`throw`) and `using (...) { }` blocks
+  - 6.7.9 ⚑ Reference-count cycles (see the decisions table)
+  - 6.7.10 ⚑ `lock`, then `async`/`await` (needs tasks, 2.6)
 - **6.8 Compiling for speed**
   - 6.8.1 Compile to bytecode and run it on a stack-based VM. Much faster than walking the syntax tree.
   - 6.8.2 An x86-64 code generator: write machine-code bytes into memory and call them like a function. This is what HolyC does.
@@ -250,11 +260,16 @@ None of these need an answer up front. Each one gets decided when its milestone 
 
 | ID | Decision | Needed by | Recommendation |
 |---|---|---|---|
-| 6.1 | Language syntax, typing and how it runs | M2 | C-like syntax with HolyC-style declarations (`I64 x = 5;`), starting with only `I64`. Interpret first, compile in M8. |
+| 6.1 | Language syntax, typing and how it runs | M2 | ✅ Decided: C#-style with CLR type names, written up in LANGUAGE.md. Interpret first, compile in M8. |
+| 6.2 | The language's name (the crate needs one) | M2 | Your call |
 | 2.4.6 | Address-space model | M3 | One identity-mapped address space, everything in ring 0, like TempleOS. Much simpler, and Rust's safety helps make up for it. |
 | 5.1 / 5.2.1 | Disk layout and filesystem | M4 | A fixed layout (boot, kernel, then filesystem) with our own simple RedSea-like filesystem. `mkimage` covers getting files in from Windows, so FAT isn't needed. |
 | 5.6 | File API | M4 | Whole-file `read_file`/`write_file`, like TempleOS |
 | 2.6.4 | Scheduling | M5 | Cooperative `yield()` first, like TempleOS. Timer preemption can be added later. |
 | 4.1 | Display route | M6 | Set a VESA BIOS (VBE) mode in stage 2, with 32-bit colour. It fits the hand-built bootloader and works on real PCs, unlike the QEMU-only Bochs adapter. |
 | 2.2.4 | Hardware floats | M8 or demos | Keep software floats until something is too slow |
-| 6.7.2 | Raw pointers in the language | M8 | Yes. It's our OS, and TempleOS allows them too. |
+| 6.7.2 | Raw pointers in the language | M8 | ✅ Decided: yes, inside `unsafe` blocks, as in C# |
+| 6.7.7 | How generics compile | M8 | Shared code for reference types and one copy per value type, as .NET does |
+| 6.7.9 | Reference-count cycles | M8 | Weak references first; a cycle collector only if leaks become a problem |
+| 6.7.10 | What `async`/`await` means on FroggeOS tasks | M8 | Each awaited call runs as its own task, and `await` yields until it finishes. That fits cooperative scheduling (2.6.4). |
+| 6.8 | Exception unwinding in compiled code | M8 | Walk the frame pointers that 2.1.4 already wants |
