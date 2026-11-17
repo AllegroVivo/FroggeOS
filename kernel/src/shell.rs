@@ -3,8 +3,9 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
+use lang::calc;
 
-use crate::{calc, heap, keyboard, timer, vga};
+use crate::{heap, keyboard, timer, vga};
 use crate::{print, println};
 
 // ``> `` + 78 characters fills an 80-character row.

@@ -3,7 +3,6 @@
 
 extern crate alloc;
 
-mod calc;
 mod gdt;
 mod heap;
 mod interrupts;
