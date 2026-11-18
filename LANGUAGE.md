@@ -144,6 +144,8 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
   - Inside a block, as in C#, a name can't be declared twice or reuse the name of an enclosing block's variable. A block may hide a variable from the prompt until its `}`, the way a C# local can hide a field.
 - **Assignment:** `x = e;`, `x += e;` (and `-= *= /= %= &= |= ^= <<= >>=`), `x++;` and `x--;`
   - These are statements only in version 1. C# also allows them inside expressions (`a[i++]`), and adding that later won't break existing code.
+  - At the prompt, `x++` prints x's new value, as `x += 1` does. (C#'s prompt prints the old one, because there `x++` is an expression.)
+  - As in C#, `++` and `--` are always one token, so `--5` is an error. Write `- -5` to negate twice.
 - **Branches and loops:** `if (c) { } else if (c) { } else { }`, `while (c) { }`, `do { } while (c);`, `for (init; cond; step) { }` and `foreach (T x in seq) { }`
 - **Switch:** `switch (x) { case 1: ... break; default: ... break; }`. As in C#, one case can't fall through into the next.
 - **Jumps:** `break;`, `continue;`, `return e;` and `return;`

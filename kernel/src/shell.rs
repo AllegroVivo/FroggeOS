@@ -83,12 +83,12 @@ fn run_command(
             println!("a < b        compare, giving True or False (also == != <= > >=)");
             println!("a && b       and: both true; also a || b (or: either one) and !a (not)");
             println!("Int64 x = 5  declare x; also Boolean b = true, var y = x + 1, const Int64 N = 3");
-            println!("x = <expr>   change a declared variable, e.g. x = x + 1");
+            println!("x = <expr>   change a declared variable: x = x + 1, x += 1 or x++");
             println!("a; b         do a, then b");
             // println! requires `{{` and `}}` to print single `{` and `}`.
             println!("if (x) {{}}    run the block if x is true: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
             println!("while (x) {{}} repeat the block while x is true: while (i < 5) {{ i = i + 1 }}");
-            println!("for (;;) {{}}  repeat with a counter: for (Int64 i = 0; i < 5; i = i + 1) {{}}");
+            println!("for (;;) {{}}  repeat with a counter: for (Int64 i = 0; i < 5; i++) {{}}");
             println!("break        leave the loop at once; continue skips to the next round");
             println!("Int64 F() {{}} declare a function: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
         },

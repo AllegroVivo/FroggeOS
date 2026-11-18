@@ -26,7 +26,7 @@ fn arithmetic() {
         ("100 / 10 / 5", "2"),
         ("17 % 5 % 3", "2"),
         ("-7 / 2", "-3"), // rounds toward zero, like C
-        ("--5", "5"),
+        ("- -5", "5"), // --5 is an error, as in C# (see shorthand)
         ("-(-(-(2 * 3)))", "-6"),
     ]);
 }
@@ -320,6 +320,38 @@ fn loop_errors() {
         ("for (Int64 i = 0; i < 3) {}", "Error: expected ';'"),
         ("for (Int64 i = 0; i < 3; i = i + 1 {}", "Error: expected ')'"),
         ("for (;;) break", "Error: expected '{'"),
+    ]);
+}
+
+#[test]
+fn shorthand() {
+    check(&[
+        ("Int64 x = 5", "5"),
+        ("x += 3", "8"),
+        ("x -= 1", "7"),
+        ("x *= 2 + 1", "21"), // the whole right side first: x = x * (2 + 1)
+        ("x /= 4", "5"),
+        ("x %= 3", "2"),
+        // x++ prints the new value, like x += 1.
+        ("x++", "3"),
+        ("x--; x--", "1"),
+        ("x", "1"),
+        // The usual step of a for.
+        ("Int64 s = 0; for (Int64 i = 0; i < 5; i++) { s += i }; s", "10"),
+        ("for (Int64 i = 10; i > 0; i -= 3) { s++ }; s", "14"),
+        // Like x = x + 1, they need a declared Int64 that can change.
+        ("y++", "Error: 'y' is not a command or variable"),
+        ("const Int64 C = 1; C += 1", "Error: 'C' is a constant"),
+        ("Boolean b = true; b++", "Error: '+' needs Int64, not Boolean"),
+        ("x += true", "Error: '+' needs Int64, not Boolean"),
+        ("x /= 0", "Error: division by zero"),
+        ("Int64 big = 9223372036854775807; big++", "Error: number too big"),
+        // -- is always one token, as in C#: --5 isn't 5, but - -5 is.
+        ("--5", "Error: '++' and '--' only work as a statement"),
+        ("++x", "Error: '++' and '--' only work as a statement"),
+        // Not inside an expression yet (LANGUAGE.md §6).
+        ("Int64 y = x++", "Error: '++' and '--' only work as a statement"),
+        ("x", "1"),
     ]);
 }
 

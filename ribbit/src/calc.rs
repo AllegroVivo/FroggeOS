@@ -242,6 +242,9 @@ enum Token<'a> {
     For,
     Break,
     Continue,
+    Compound(Op),
+    PlusPlus,
+    MinusMinus,
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -251,6 +254,13 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
     while let Some((start, c)) = chars.next() {
         let token = match c {
             ' ' => continue,
+            '+' if chars.next_if(|&(_, d)| d == '+').is_some() => Token::PlusPlus,
+            '-' if chars.next_if(|&(_, d)| d == '-').is_some() => Token::MinusMinus,
+            '+' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Add),
+            '-' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Subtract),
+            '*' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Multiply),
+            '/' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Divide),
+            '%' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Remainder),
             '+' => Token::Plus,
             '-' => Token::Minus,
             '*' => Token::Star,
@@ -328,6 +338,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
     Ok(tokens)
 }
 
+#[derive(Clone, Copy, PartialEq)]
 enum Op {
     Add,
     Subtract,
@@ -411,6 +422,10 @@ enum Stmt<'a> {
         step: Vec<Stmt<'a>>,
         body: Vec<Stmt<'a>>,
     },
+}
+
+fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
+    Stmt::Assign(name, Expr::Binary(op, Box::new(Expr::Variable(name)), Box::new(value)))
 }
 
 struct Parser<'a> {
@@ -534,6 +549,15 @@ impl<'a> Parser<'a> {
             (Some(Token::Name(name)), Some(Token::Equals)) => {
                 self.pos += 2;
                 Ok(Stmt::Assign(name, self.expression()?))
+            },
+            (Some(Token::Name(name)), Some(Token::Compound(op))) => {
+                self.pos += 2;
+                Ok(shorthand(name, op, self.expression()?))
+            },
+            (Some(Token::Name(name)), Some(token @ (Token::PlusPlus | Token::MinusMinus))) => {
+                self.pos += 2;
+                let op = if token == Token::PlusPlus { Op::Add } else { Op::Subtract };
+                Ok(shorthand(name, op, Expr::Literal(Value::Int64(1))))
             },
             _ => Ok(Stmt::Expr(self.expression()?))
         }
@@ -684,6 +708,9 @@ impl<'a> Parser<'a> {
                 self.pos += 1; // the ')'
                 Ok(Expr::Call(name, args))
             },
+            Some(Token::Name(_)) if matches!(self.peek(), Some(Token::PlusPlus | Token::MinusMinus)) => {
+                Err(Error::Syntax("'++' and '--' only work as a statement"))
+            },
             Some(Token::Name(name)) => Ok(Expr::Variable(name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
@@ -692,6 +719,9 @@ impl<'a> Parser<'a> {
                 }
                 Ok(inside)
             }
+            Some(Token::PlusPlus | Token::MinusMinus) => {
+                Err(Error::Syntax("'++' and '--' only work as a statement"))
+            },
             Some(_) => Err(Error::Syntax("expected a number, variable, or '('")),
             None => Err(Error::Syntax("unexpected end of input")),
         }
