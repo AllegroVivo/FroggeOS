@@ -256,6 +256,74 @@ fn while_loops() {
 }
 
 #[test]
+fn for_loops() {
+    check(&[
+        ("Int64 s = 0; for (Int64 i = 1; i <= 10; i = i + 1) { s = s + i }; s", "55"),
+        // The loop's own variable is gone after the loop...
+        ("i", "Error: 'i' is not a command or variable"),
+        // ...and it can hide a prompt variable until the loop ends.
+        ("Int64 i = 100; for (Int64 i = 0; i < 3; i = i + 1) {}; i", "100"),
+        // A prompt variable can be the counter, and keeps its last value.
+        ("Int64 n = 0; for (n = 1; n < 1000; n = n * 2) {}; n", "1024"),
+        // Any part can be left out. With no condition it loops until a break.
+        ("Int64 k = 0; for (; k < 3;) { k = k + 1 }; k", "3"),
+        ("for (;;) {}", "Error: loop stopped after 1000000 rounds"),
+        // Each round's body is a fresh block inside the loop's own one.
+        ("Int64 t = 0; for (Int64 a = 1; a <= 3; a = a + 1) { Int64 sq = a * a; t = t + sq }; t", "14"),
+        ("for (Int64 a = 0; a < 3; a = a + 1) { Int64 a = 5 }", "Error: 'a' is already declared"),
+        (
+            "t = 0; for (Int64 a = 1; a <= 3; a = a + 1) { for (Int64 b = 1; b <= 3; b = b + 1) { t = t + a * b } }; t",
+            "36",
+        ),
+        ("for (; 1;) {}", "Error: for needs Boolean, not Int64"),
+    ]);
+}
+
+#[test]
+fn break_continue() {
+    check(&[
+        ("Int64 n = 0; while (true) { n = n + 1; if (n == 5) { break } }; n", "5"),
+        ("for (;;) { n = n + 1; if (n >= 8) { break } }; n", "8"),
+        // Nothing after a break runs.
+        ("Int64 m = 0; while (true) { break; m = 99 }; m", "0"),
+        // continue skips the rest of the round...
+        (
+            "Int64 odd = 0; Int64 i = 0; while (i < 10) { i = i + 1; if (i % 2 == 0) { continue } odd = odd + i }; odd",
+            "25",
+        ),
+        // ...but a for's last part still runs, so the loop still counts.
+        ("odd = 0; for (Int64 j = 1; j <= 10; j = j + 1) { if (j % 2 == 0) { continue } odd = odd + j }; odd", "25"),
+        // break only leaves the innermost loop.
+        (
+            "Int64 c = 0; for (Int64 a = 0; a < 3; a = a + 1) { for (Int64 b = 0; b < 3; b = b + 1) { if (b == 1) { break } c = c + 1 } }; c",
+            "3",
+        ),
+        // A return inside a loop leaves the loop and the function at once...
+        ("Int64 FirstPower(Int64 over) { for (Int64 p = 1; ; p = p * 2) { if (p > over) { return p } } }", ""),
+        ("FirstPower(100)", "128"),
+        // ...and afterwards a declaration still goes to the prompt.
+        ("FirstPower(5); Int64 after = 1", "1"),
+        ("after", "1"),
+    ]);
+}
+
+#[test]
+fn loop_errors() {
+    check(&[
+        ("break", "Error: break and continue are only allowed within a loop body"),
+        ("continue", "Error: break and continue are only allowed within a loop body"),
+        ("if (true) { break }", "Error: break and continue are only allowed within a loop body"),
+        ("Void Stop() { break }", "Error: break and continue are only allowed within a loop body"),
+        // A for's last part isn't inside the loop's body.
+        ("for (;; break) {}", "Error: break and continue are only allowed within a loop body"),
+        ("for Int64 i = 0; i < 3; i = i + 1) {}", "Error: expected '(' after 'for'"),
+        ("for (Int64 i = 0; i < 3) {}", "Error: expected ';'"),
+        ("for (Int64 i = 0; i < 3; i = i + 1 {}", "Error: expected ')'"),
+        ("for (;;) break", "Error: expected '{'"),
+    ]);
+}
+
+#[test]
 fn nesting() {
     // 38 brackets deep is the most that fits in a 78-character shell line.
     let deep = format!("{}1{}", "(".repeat(38), ")".repeat(38));

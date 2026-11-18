@@ -88,6 +88,8 @@ fn run_command(
             // println! requires `{{` and `}}` to print single `{` and `}`.
             println!("if (x) {{}}    run the block if x is true: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
             println!("while (x) {{}} repeat the block while x is true: while (i < 5) {{ i = i + 1 }}");
+            println!("for (;;) {{}}  repeat with a counter: for (Int64 i = 0; i < 5; i = i + 1) {{}}");
+            println!("break        leave the loop at once; continue skips to the next round");
             println!("Int64 F() {{}} declare a function: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
         },
         "clear" => vga::clear_screen(),

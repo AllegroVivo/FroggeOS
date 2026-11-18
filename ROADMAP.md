@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-17):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64 and Boolean values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, `if`/`else`, `while`, and functions with recursion. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 86 KB of its 128 KB budget.
+**Status (2026-11-18):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64 and Boolean values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, `if`/`else`, `while`, `for`, `break` and `continue`, and functions with recursion. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 89 KB of its 128 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -161,7 +161,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
   - 6.3.5 Typed declarations (`Int64 x = 5;`, `var`, `const`) and a strict `Boolean` type with `true`/`false`. Assigning to an undeclared name becomes an error. ✅
 - **6.4 Statements**
   - 6.4.1 Statement lists, `;` and `{ }` blocks, each with its own scope ✅
-  - 6.4.2 `if`/`else` ✅, `while` ✅, `for`, `break`/`continue`
+  - 6.4.2 `if`/`else`, `while`, `for`, `break`/`continue` ✅
   - 6.4.3 Multi-line input: the shell keeps reading until the braces balance
   - 6.4.4 Make `;` required (LANGUAGE.md §6), and add `do`/`while` and `assert`
 - **6.5 Functions**

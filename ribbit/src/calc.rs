@@ -155,7 +155,7 @@ pub enum Error<'a> {
     DivideByZero,
     Overflow,                   // a number or result is too big for an i64
     UnknownName(&'a str),       // a name with no value stored under it
-    LoopLimit,                  // a `while` loop repeated ``MAX_LOOP_ROUNDS`` times
+    LoopLimit,                  // a loop repeated ``MAX_LOOP_ROUNDS`` times
     // A value of the wrong type.
     WrongType { place: &'static str, wanted: &'static str, found: &'static str},
     Undeclared(&'a str),        // assigning to a name that was not declared
@@ -239,6 +239,9 @@ enum Token<'a> {
     Comma,
     Return,
     Void,
+    For,
+    Break,
+    Continue,
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -312,6 +315,9 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     "Boolean" => Token::Type(Type::Boolean),
                     "return" => Token::Return,
                     "Void" => Token::Void,
+                    "for" => Token::For,
+                    "break" => Token::Break,
+                    "continue" => Token::Continue,
                     name => Token::Name(name),
                 }
             }
@@ -395,8 +401,16 @@ enum Stmt<'a> {
     Assign(&'a str, Expr<'a>),
     Declare { name: &'a str, ty: Option<Type>, value: Expr<'a>, constant: bool },
     If(Expr<'a>, Vec<Stmt<'a>>, Vec<Stmt<'a>>), // condition, then, else
-    While(Expr<'a>, Vec<Stmt<'a>>),             // condition, body
     Return(Option<Expr<'a>>),
+    Break,
+    Continue,
+    Loop {
+        keyword: &'static str,
+        init: Vec<Stmt<'a>>,
+        condition: Expr<'a>,
+        step: Vec<Stmt<'a>>,
+        body: Vec<Stmt<'a>>,
+    },
 }
 
 struct Parser<'a> {
@@ -404,6 +418,7 @@ struct Parser<'a> {
     pos: usize,
     depth: usize,
     in_function: bool,
+    loops: usize,
     functions: Vec<(&'a str, Function<'a>)>,
 }
 
@@ -444,7 +459,7 @@ impl<'a> Parser<'a> {
                 },
                 _ => {
                     let stmt = self.statement()?;
-                    let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::While(..));
+                    let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::Loop { .. });
                     list.push(stmt);
                     let separator_next =
                         matches!(self.peek(), None | Some(Token::Semicolon | Token::RightBrace));
@@ -478,8 +493,22 @@ impl<'a> Parser<'a> {
             (Some(Token::While), _) => {
                 self.pos += 1;
                 let condition = self.condition()?;
-                let body = self.block()?;
-                Ok(Stmt::While(condition, body))
+                let body = self.loop_body()?;
+                Ok(Stmt::Loop { keyword: "while", init: Vec::new(), condition, step: Vec::new(), body })
+            },
+            (Some(Token::For), _) => {
+                self.pos += 1;
+                self.expect(Token::LeftParen, "expected '(' after 'for'")?;
+                let init = self.for_part(Token::Semicolon, "expected ';'")?;
+                // No condition loops go until break - e.g. `for (;;)`
+                let condition = match self.peek() {
+                    Some(Token::Semicolon) => Expr::Literal(Value::Boolean(true)),
+                    _ => self.expression()?,
+                };
+                self.expect(Token::Semicolon, "expected ';'")?;
+                let step = self.for_part(Token::RightParen, "expected ')'")?;
+                let body = self.loop_body()?;
+                Ok(Stmt::Loop { keyword: "for", init, condition, step, body })
             },
             (Some(Token::Return), _) => {
                 self.pos += 1;
@@ -492,6 +521,13 @@ impl<'a> Parser<'a> {
                     _ => Some(self.expression()?),
                 };
                 Ok(Stmt::Return(value))
+            },
+            (Some(token @ (Token::Break | Token::Continue)), _) => {
+                self.pos += 1;
+                if self.loops == 0 {
+                    return Err(Error::Syntax("break and continue are only allowed within a loop body"));
+                }
+                Ok(if token == Token::Break { Stmt::Break } else { Stmt::Continue })
             },
             (Some(Token::Void), _) => Err(Error::Syntax("cannot assign void to a variable")),
             (Some(Token::Type(_) | Token::Var | Token::Const), _) => self.declaration(),
@@ -569,6 +605,20 @@ impl<'a> Parser<'a> {
         let condition = self.expression()?;
         self.expect(Token::RightParen, "expected ')'")?;
         Ok(condition)
+    }
+
+    // The body of a `while` or `for` loop.
+    fn loop_body(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
+        self.loops += 1;
+        let body = self.block()?;
+        self.loops -= 1;
+        Ok(body)
+    }
+
+    fn for_part(&mut self, end: Token<'a>, message: &'static str) -> Result<Vec<Stmt<'a>>, Error<'a>> {
+        let part = if self.peek() == Some(end) { Vec::new() } else { vec![self.statement()?] };
+        self.expect(end, message)?;
+        Ok(part)
     }
     
     fn block(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
@@ -706,8 +756,10 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
 const MAX_LOOP_ROUNDS: u64 = 1_000_000;
 
 enum Flow {
-    Normal(Option<Value>), // statement reached the end
-    Return(Option<Value>), // statement was stopped by a `return`
+    Normal(Option<Value>),  // statement reached the end
+    Return(Option<Value>),  // statement was stopped by a `return`
+    Break,                  // stopped by a `break` statement
+    Continue,               // stopped by a `continue` statement
 }
 
 // Runs statements in order. Returns the value of the last item if that
@@ -744,22 +796,34 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
             },
             Stmt::If(condition, then_block, else_block) => {
                 let block = if eval(condition, vars)?.boolean("if")? { then_block } else { else_block };
-                if let Flow::Return(value) = run_block(block, vars)? {
-                    return Ok(Flow::Return(value));
+                match run_block(block, vars)? {
+                    Flow::Normal(_) => None,
+                    flow => return Ok(flow),
                 }
-                None
             },
-            Stmt::While(condition, body) => {
+            Stmt::Loop { keyword, init, condition, step, body } => {
+                let start = vars.locals.len();
+                vars.depth += 1;
+                run(init, vars)?;
                 let mut rounds = 0;
-                while eval(condition, vars)?.boolean("while")? {
+                while eval(condition, vars)?.boolean(keyword)? {
                     rounds += 1;
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
                     }
-                    if let Flow::Return(value) = run_block(body, vars)? {
-                        return Ok(Flow::Return(value));
+                    match run_block(body, vars)? {
+                        Flow::Break => break,
+                        Flow::Return(value) => {
+                            vars.depth -= 1;
+                            vars.locals.truncate(start);
+                            return Ok(Flow::Return(value));
+                        }
+                        Flow::Normal(_) | Flow::Continue => {}
                     }
+                    run(step, vars)?;
                 }
+                vars.depth -= 1;
+                vars.locals.truncate(start);
                 None
             }
             Stmt::Return(expr) => {
@@ -768,7 +832,9 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                     None => None,
                 };
                 return Ok(Flow::Return(value));
-            }
+            },
+            Stmt::Break => return Ok(Flow::Break),
+            Stmt::Continue => return Ok(Flow::Continue),
         }
     }
     Ok(Flow::Normal(last))
@@ -806,7 +872,7 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
     vars.locals = caller;
     let value = match flow {
         Flow::Return(value) => value,
-        Flow::Normal(_) => None,
+        Flow::Normal(_) | Flow::Break | Flow::Continue => None,
     };
     match (value, function.returns) {
         (Some(value), Some(returns)) if value.type_of() == returns => Ok(Some(value)),
@@ -825,10 +891,10 @@ fn parse<'a>(
     vars: &Variables,
 ) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Error<'a>> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, pos: 0, depth: 0, in_function: false, functions: Vec::new() };
+    let mut parser = Parser { tokens, pos: 0, depth: 0, in_function: false, loops:0, functions: Vec::new() };
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
-        // variable or being assigned, is most likely a mistype.
+        // variable or being assigned, is most likely mistyped.
         [Token::Name(name), second, ..]
             if !matches!(second, Token::Equals | Token::LeftParen) && !vars.contains_key(name) =>
             {
@@ -859,6 +925,8 @@ pub fn evaluate<'a>(
     }
     let stack_start = stack_address();
     let mut env = Env { globals: vars, functions, locals: Vec::new(), depth: 0, stack_start };
-    let (Flow::Normal(value) | Flow::Return(value)) = run(&program, &mut env)?;
-    Ok(value)
+    match run(&program, &mut env)? {
+        Flow::Normal(value) | Flow::Return(value) => Ok(value),
+        Flow::Break | Flow::Continue => Ok(None),
+    }
 }
