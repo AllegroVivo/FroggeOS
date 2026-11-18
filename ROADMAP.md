@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-17):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which so far has Int64 and Boolean values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, `if`/`else` and `while`, and lives in its own crate with `cargo test` tests. The kernel is 72 KB of its 128 KB budget.
+**Status (2026-11-17):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64 and Boolean values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, `if`/`else`, `while`, and functions with recursion. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 86 KB of its 128 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -165,8 +165,8 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
   - 6.4.3 Multi-line input: the shell keeps reading until the braces balance
   - 6.4.4 Make `;` required (LANGUAGE.md §6), and add `do`/`while` and `assert`
 - **6.5 Functions**
-  - 6.5.1 Definitions, parameters, return values, recursion
-  - 6.5.2 Call frames and local scopes, plus a recursion limit so `f(){f();}` reports an error instead of overflowing the kernel stack
+  - 6.5.1 Definitions, parameters, return values, recursion ✅
+  - 6.5.2 Call frames and local scopes, plus a recursion limit so `f(){f();}` reports an error instead of overflowing the kernel stack ✅ (each line may use 40 KB of the 64 KB stack)
   - 6.5.3 Built-in functions written in Rust, with .NET-style names: `Console.WriteLine`, `Speaker.Beep`, `Timer.Sleep`, `Timer.Uptime`, …
 - **6.6 Commands, scripts and the library**
   - 6.6.1 A command table, argparse-style. Each command declares its arguments (positional, `-f`/`--flag`, options with values), and one shared parser checks them and generates `help <command>`. A line whose first word is a command runs it; anything else is code.

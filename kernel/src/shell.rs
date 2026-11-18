@@ -18,6 +18,7 @@ pub fn run() -> ! {
     let mut len = 0;
     let mut history: Vec<String> = Vec::new();
     let mut vars = calc::Variables::new();
+    let mut functions = calc::Functions::new();
     print!("> ");
 
     loop {
@@ -28,7 +29,7 @@ pub fn run() -> ! {
                 if !text.trim().is_empty() {
                     history.push(String::from(text)); // heap copy
                 }
-                run_command(text, &history, &mut vars);
+                run_command(text, &history, &mut vars, &mut functions);
                 len = 0;
                 print!("> ");
             }
@@ -58,7 +59,12 @@ fn wait_for_char() -> char {
     }
 }
 
-fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
+fn run_command(
+    line: &str,
+    history: &[String],
+    vars: &mut calc::Variables,
+    functions: &mut calc::Functions,
+) {
     let mut words = line.split_whitespace();
     let Some(command) = words.next() else {
         return;
@@ -82,6 +88,7 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
             // println! requires `{{` and `}}` to print single `{` and `}`.
             println!("if (x) {{}}    run the block if x is true: if (x > 1) {{ y = 2 }} else {{ y = 3 }}");
             println!("while (x) {{}} repeat the block while x is true: while (i < 5) {{ i = i + 1 }}");
+            println!("Int64 F() {{}} declare a function: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
         },
         "clear" => vga::clear_screen(),
         "echo" => {
@@ -110,7 +117,7 @@ fn run_command(line: &str, history: &[String], vars: &mut calc::Variables) {
                 println!("{}{} {} = {}", constant, variable.value.type_name(), name, variable.value);
             }
         },
-        _ => match calc::evaluate(line, vars) {
+        _ => match calc::evaluate(line, vars, functions) {
             Ok(Some(value)) => println!("{}", value),
             Ok(None) => {} // line ended with an `if` or `while`.
             Err(error) => println!("Error: {}", error),

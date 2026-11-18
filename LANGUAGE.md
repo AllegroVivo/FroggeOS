@@ -184,7 +184,7 @@ C's precedence has a trap: `x & 1 == 0` means `x & (1 == 0)`. Strict Booleans tu
 - **Calls** always need `()`.
 - **Parameters:** `params Int64[] values`, `ref Int64 x` and `out Int64 result`
 - **Built-ins:** `extern Void Beep(Int64 hz, Int64 ms);` declares a function whose body is written in Rust. The built-in library becomes a FroggeOS source file full of these.
-- **Recursion limit:** a call that recurses too deep reports an error instead of overflowing the kernel stack (6.5.2).
+- **Recursion limit:** a call that recurses too deep reports an error instead of overflowing the kernel stack (6.5.2). Ribbit code may use 40 KB of the kernel's 64 KB stack, which is about 45 nested calls of a small function.
 
 ```csharp
 delegate Int64 Op(Int64 a, Int64 b);

@@ -85,14 +85,42 @@ pub struct Variable {
 // All declared variables by name.
 pub type Variables = BTreeMap<String, Variable>;
 
+// A declared function.
+pub struct Function<'a> {
+    returns: Option<Type>,          // None for void
+    params: Vec<(&'a str, Type)>,
+    body: Vec<Stmt<'a>>,
+}
+
+// All declared functions by name.
+pub type Functions = BTreeMap<String, Function<'static>>;
+
 // Variables seen by the currently executing code.
 struct Env<'a, 'v> {
     globals: &'v mut Variables,
+    functions: &'v Functions,
     locals: Vec<(&'a str, Variable)>,
     depth: usize,
+    stack_start: usize                  // where the stack was when the line began
+}
+
+// The most stack a line may use while it runs.
+const MAX_STACK: usize = 40 * 1024;
+
+// Roughly where the stack is now.
+fn stack_address() -> usize {
+    let marker = 0u8;
+    &marker as *const u8 as usize
 }
 
 impl<'a> Env<'a, '_> {
+    fn check_stack(&self) -> Result<(), Error<'a>> {
+        if self.stack_start.saturating_sub(stack_address()) > MAX_STACK {
+            return Err(Error::TooDeep);
+        }
+        Ok(())
+    }
+
     fn get(&self, name: &str) -> Option<&Variable> {
         match self.locals.iter().rev().find(|(local, _)| *local == name) {
             Some((_, variable)) => Some(variable),
@@ -134,7 +162,12 @@ pub enum Error<'a> {
     Constant(&'a str),          // assigning to a const
     // Attempting to store the wrong type into a variable.
     VariableType { name: &'a str, wanted: &'static str, found: &'static str },
-    AlreadyDeclared(&'a str)    // a name is previously declared within a context
+    AlreadyDeclared(&'a str),   // a name is previously declared within a context
+    UnknownFunction(&'a str),   // calling a name that isn't a function
+    ArgumentCount { name: &'a str, wanted: usize, found: usize },
+    NoReturn(&'a str),          // a function indicating a return without the `return` statement
+    NoValue(&'a str),           // attempting to use the result of a void function
+    TooDeep,                    // line used more than `MAX_STACK` stack frames
 }
 
 // Display is used by ``println!("{}", error)``
@@ -156,6 +189,14 @@ impl fmt::Display for Error<'_> {
             Error::VariableType { name, wanted, found } => {
                 write!(f, "'{}' needs {}, not {}", name, wanted, found)
             },
+            Error::UnknownFunction(name) => write!(f, "'{}' is not a function", name),
+            Error::ArgumentCount { name, wanted, found } => {
+                let s = if *wanted == 1 { "" } else { "s" };
+                write!(f, "'{}' takes {} argument{}, not {}", name, wanted, s, found)
+            },
+            Error::NoReturn(name) => write!(f, "'{}' must return a value", name),
+            Error::NoValue(name) => write!(f, "'{}' is void and has no value to be used", name),
+            Error::TooDeep => write!(f, "nested too deeply (over {} KB of stack)", MAX_STACK / 1024),
         }
     }
 }
@@ -195,6 +236,9 @@ enum Token<'a> {
     Var,
     Const,
     Type(Type),
+    Comma,
+    Return,
+    Void,
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -214,6 +258,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             ';' => Token::Semicolon,
             '{' => Token::LeftBrace,
             '}' => Token::RightBrace,
+            ',' => Token::Comma,
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
             '|' if chars.next_if(|&(_, d)| d == '|').is_some() => Token::OrOr,
             '=' | '!' | '<' | '>' => {
@@ -265,6 +310,8 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     "const" => Token::Const,
                     "Int64" => Token::Type(Type::Int64),
                     "Boolean" => Token::Type(Type::Boolean),
+                    "return" => Token::Return,
+                    "Void" => Token::Void,
                     name => Token::Name(name),
                 }
             }
@@ -340,6 +387,7 @@ enum Expr<'a> {
     Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),
     And(Box<Expr<'a>>, Box<Expr<'a>>),
     Or(Box<Expr<'a>>, Box<Expr<'a>>),
+    Call(&'a str, Vec<Expr<'a>>),
 }
 
 enum Stmt<'a> {
@@ -348,16 +396,24 @@ enum Stmt<'a> {
     Declare { name: &'a str, ty: Option<Type>, value: Expr<'a>, constant: bool },
     If(Expr<'a>, Vec<Stmt<'a>>, Vec<Stmt<'a>>), // condition, then, else
     While(Expr<'a>, Vec<Stmt<'a>>),             // condition, body
+    Return(Option<Expr<'a>>),
 }
 
 struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     pos: usize,
+    depth: usize,
+    in_function: bool,
+    functions: Vec<(&'a str, Function<'a>)>,
 }
 
 impl<'a> Parser<'a> {
     fn peek(&self) -> Option<Token<'a>> {
         self.tokens.get(self.pos).copied()
+    }
+
+    fn peek_at(&self, n: usize) -> Option<Token<'a>> {
+        self.tokens.get(self.pos + n).copied()
     }
 
     fn next(&mut self) -> Option<Token<'a>> {
@@ -380,9 +436,12 @@ impl<'a> Parser<'a> {
     fn statements(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
         let mut list = Vec::new();
         loop {
-            match self.peek() {
-                None | Some(Token::RightBrace) => return Ok(list),
-                Some(Token::Semicolon) => self.pos += 1,
+            match (self.peek(), self.peek_at(1), self.peek_at(2)) {
+                (None | Some(Token::RightBrace), _, _) => return Ok(list),
+                (Some(Token::Semicolon), _, _) => self.pos += 1,
+                (Some(Token::Type(_) | Token::Void), Some(Token::Name(_)), Some(Token::LeftParen)) => {
+                    self.function()?;
+                },
                 _ => {
                     let stmt = self.statement()?;
                     let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::While(..));
@@ -422,6 +481,19 @@ impl<'a> Parser<'a> {
                 let body = self.block()?;
                 Ok(Stmt::While(condition, body))
             },
+            (Some(Token::Return), _) => {
+                self.pos += 1;
+                if !self.in_function {
+                    return Err(Error::Syntax("return is only allowed within a function body"));
+                }
+                // A plain `return` gives back nothing.
+                let value = match self.peek() {
+                    None | Some(Token::Semicolon | Token::RightBrace) => None,
+                    _ => Some(self.expression()?),
+                };
+                Ok(Stmt::Return(value))
+            },
+            (Some(Token::Void), _) => Err(Error::Syntax("cannot assign void to a variable")),
             (Some(Token::Type(_) | Token::Var | Token::Const), _) => self.declaration(),
             (Some(Token::Name(name)), Some(Token::Equals)) => {
                 self.pos += 2;
@@ -455,6 +527,42 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Declare {name, ty, value, constant })
     }
 
+    fn function(&mut self) -> Result<(), Error<'a>> {
+        let returns = match self.next() {
+            Some(Token::Type(ty)) => Some(ty),
+            _ => None,
+        };
+        let Some(Token::Name(name)) = self.next() else {
+            return Err(Error::Syntax("expected a name"))
+        };
+        if self.depth > 0 {
+            return Err(Error::Syntax("functions may only be declared at the prompt"));
+        }
+        self.expect(Token::LeftParen, "expected '('")?;
+        let mut params = Vec::new();
+        while self.peek() != Some(Token::RightParen) {
+            if !params.is_empty() {
+                self.expect(Token::Comma, "expected ',' or ')'")?;
+            }
+            let Some(Token::Type(ty)) = self.next() else {
+                return Err(Error::Syntax("expected a parameter type"));
+            };
+            let Some(Token::Name(param)) = self.next() else {
+                return Err(Error::Syntax("expected a parameter name"));
+            };
+            if params.iter().any(|(other, _)| *other == param) {
+                return Err(Error::AlreadyDeclared(param));
+            }
+            params.push((param, ty));
+        }
+        self.pos += 1; // the ')'
+        self.in_function = true;
+        let body = self.block()?;
+        self.in_function = false;
+        self.functions.push((name, Function { returns, params, body }));
+        Ok(())
+    }
+
     // The condition of an ``if`` or ``while``.
     fn condition(&mut self) -> Result<Expr<'a>, Error<'a>> {
         self.expect(Token::LeftParen, "expected '(' after if or while")?;
@@ -465,7 +573,9 @@ impl<'a> Parser<'a> {
     
     fn block(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
         self.expect(Token::LeftBrace, "expected '{'")?;
+        self.depth += 1;
         let body = self.statements()?;
+        self.depth -= 1;
         self.expect(Token::RightBrace, "expected '}'")?;
         Ok(body)
     }
@@ -512,6 +622,18 @@ impl<'a> Parser<'a> {
             Some(Token::Number(n)) => Ok(Expr::Literal(Value::Int64(n))),
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
+            Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
+                self.pos += 1;
+                let mut args = Vec::new();
+                while self.peek() != Some(Token::RightParen) {
+                    if !args.is_empty() {
+                        self.expect(Token::Comma, "expected ',' or ')'")?;
+                    }
+                    args.push(self.expression()?);
+                }
+                self.pos += 1; // the ')'
+                Ok(Expr::Call(name, args))
+            },
             Some(Token::Name(name)) => Ok(Expr::Variable(name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
@@ -526,7 +648,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn eval<'a>(expr: &Expr<'a>, vars: &Env<'a, '_>) -> Result<Value, Error<'a>> {
+fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
+    vars.check_stack()?;
     match expr {
         Expr::Literal(value) => Ok(*value),
         Expr::Variable(name) => {
@@ -576,17 +699,24 @@ fn eval<'a>(expr: &Expr<'a>, vars: &Env<'a, '_>) -> Result<Value, Error<'a>> {
             };
             result.ok_or(Error::Overflow)
         },
+        Expr::Call(name, args) => call(name, args, vars)?.ok_or(Error::NoValue(name)),
     }
 }
 
 const MAX_LOOP_ROUNDS: u64 = 1_000_000;
 
+enum Flow {
+    Normal(Option<Value>), // statement reached the end
+    Return(Option<Value>), // statement was stopped by a `return`
+}
+
 // Runs statements in order. Returns the value of the last item if that
 // item is an expression or assignment.
-fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, Error<'a>> {
+fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
     let mut last = None;
     for stmt in stmts {
         last = match stmt {
+            Stmt::Expr(Expr::Call(name, args)) => call(name, args, vars)?,
             Stmt::Expr(expr) => Some(eval(expr, vars)?),
             Stmt::Declare {name, ty, value, constant } => {
                 let value = eval(value, vars)?;
@@ -613,10 +743,9 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, 
                 Some(value)
             },
             Stmt::If(condition, then_block, else_block) => {
-                if eval(condition, vars)?.boolean("if")? {
-                    run_block(then_block, vars)?;
-                } else {
-                    run_block(else_block, vars)?;
+                let block = if eval(condition, vars)?.boolean("if")? { then_block } else { else_block };
+                if let Flow::Return(value) = run_block(block, vars)? {
+                    return Ok(Flow::Return(value));
                 }
                 None
             },
@@ -627,42 +756,109 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, 
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
                     }
-                    run_block(body, vars)?;
+                    if let Flow::Return(value) = run_block(body, vars)? {
+                        return Ok(Flow::Return(value));
+                    }
                 }
                 None
             }
+            Stmt::Return(expr) => {
+                let value = match expr {
+                    Some(expr) => Some(eval(expr, vars)?),
+                    None => None,
+                };
+                return Ok(Flow::Return(value));
+            }
         }
     }
-    Ok(last)
+    Ok(Flow::Normal(last))
 }
 
 // Runs statements within a { } block.
-fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<(), Error<'a>> {
+fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
     let start = vars.locals.len();
     vars.depth += 1;
-    run(stmts, vars)?;
+    let flow = run(stmts, vars)?;
     vars.depth -= 1;
     vars.locals.truncate(start);
-    Ok(())
+    Ok(flow)
 }
 
-// Runs a line. Returns the value to print, if any.
-pub fn evaluate<'a>(text: &'a str, vars: &mut Variables) -> Result<Option<Value>, Error<'a>> {
+// Calls a function and returns the value it gives back (or None).
+fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, Error<'a>> {
+    // `functions` is a shared reference. We need a copy to use in case `vars` changes.
+    let functions = vars.functions;
+    let function = functions.get(name).ok_or(Error::UnknownFunction(name))?;
+    if args.len() != function.params.len() {
+        return Err(Error::ArgumentCount { name, wanted: function.params.len(), found: args.len() });
+    }
+    vars.check_stack()?;
+    let mut locals: Vec<(&'a str, Variable)> = Vec::new();
+    for ((param, ty), arg) in function.params.iter().zip(args) {
+        let value = eval(arg, vars)?;
+        if value.type_of() != *ty {
+            return Err(Error::VariableType { name: param, wanted: ty.name(), found: value.type_name() });
+        }
+        locals.push((param, Variable { value, constant: false }));
+    }
+    let caller = core::mem::replace(&mut vars.locals, locals);
+    let flow = run_block(&function.body, vars)?;
+    vars.locals = caller;
+    let value = match flow {
+        Flow::Return(value) => value,
+        Flow::Normal(_) => None,
+    };
+    match (value, function.returns) {
+        (Some(value), Some(returns)) if value.type_of() == returns => Ok(Some(value)),
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(Error::NoReturn(name)),
+        (Some(value), returns) => {
+            let wanted = returns.map_or("Void", Type::name);
+            Err(Error::VariableType { name, wanted, found: value.type_name() })
+        }
+    }
+}
+
+// Turns a line into its component statements.
+fn parse<'a>(
+    text: &'a str,
+    vars: &Variables,
+) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Error<'a>> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser { tokens, pos: 0, depth: 0, in_function: false, functions: Vec::new() };
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
-        // variable or being assigned, is most likely a mistyped command.
+        // variable or being assigned, is most likely a mistype.
         [Token::Name(name), second, ..]
-            if second != Token::Equals && !vars.contains_key(name) =>
-        {
-            Error::UnknownName(name)
-        }
+            if !matches!(second, Token::Equals | Token::LeftParen) && !vars.contains_key(name) =>
+            {
+                Error::UnknownName(name)
+            }
         _ => error,
     })?;
     if parser.pos < parser.tokens.len() {
         return Err(Error::Syntax("unexpected '}'"));
     }
-    let mut env = Env { globals: vars, locals: Vec::new(), depth: 0 };
-    run(&program, &mut env)
+    Ok((program, parser.functions))
+}
+
+// Runs a line. Returns the value to print, if any.
+pub fn evaluate<'a>(
+    text: &'a str,
+    vars: &mut Variables,
+    functions: &mut Functions,
+) -> Result<Option<Value>, Error<'a>> {
+    let (mut program, declared) = parse(text, vars)?;
+    if !declared.is_empty() {
+        let text: &'static str = Box::leak(String::from(text).into_boxed_str());
+        let (forever, declared) = parse(text, vars)?;
+        for (name, function) in declared {
+            functions.insert(String::from(name), function);
+        }
+        program = forever;
+    }
+    let stack_start = stack_address();
+    let mut env = Env { globals: vars, functions, locals: Vec::new(), depth: 0, stack_start };
+    let (Flow::Normal(value) | Flow::Return(value)) = run(&program, &mut env)?;
+    Ok(value)
 }

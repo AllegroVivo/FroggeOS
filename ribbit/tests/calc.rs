@@ -1,11 +1,12 @@
-use ribbit::calc::{Variables, evaluate};
+use ribbit::calc::{Functions, Variables, evaluate};
 
 // Types the lines into one shell session and checks what the
 // shell would print after each one.
 fn check(session: &[(&str, &str)]) {
     let mut vars = Variables::new();
+    let mut functions = Functions::new();
     for &(line, expected) in session {
-        let printed = match evaluate(line, &mut vars) {
+        let printed = match evaluate(line, &mut vars, &mut functions) {
             Ok(Some(value)) => value.to_string(),
             Ok(None) => String::new(),
             Err(error) => format!("Error: {}", error),
@@ -262,5 +263,81 @@ fn nesting() {
         ("var a=0;var b=0;while(a<3){a=a+1;if(a==2){b=b+10}else{b=b+1}};b", "12"),
         ("var i=0;var t=0;while(i<3){var j=0;while(j<4){t=t+1;j=j+1};i=i+1};t", "12"),
         (&deep, "1"),
+    ]);
+}
+
+#[test]
+fn functions() {
+    check(&[
+        ("Int64 Square(Int64 n) { return n * n }", ""),
+        ("Square(7)", "49"),
+        ("Square(2) + Square(3)", "13"),
+        ("Square(Square(3))", "81"),
+        ("Boolean IsEven(Int64 n) { return n % 2 == 0 }", ""),
+        ("IsEven(10) && !IsEven(7)", "True"),
+        ("Int64 Add(Int64 a, Int64 b) { return a + b }; Add(2, 40)", "42"),
+        // A body can have statements, loops, and a `return` from inside a loop.
+        ("Int64 Sum(Int64 n) { Int64 s = 0; while (n > 0) { s = s + n; n = n - 1 } return s }", ""),
+        ("Sum(10)", "55"),
+        ("Int64 Root(Int64 x) { Int64 i = 0; while (true) { i = i + 1; if (i * i > x) { return i - 1 } } }", ""),
+        ("Root(50)", "7"),
+        // A Void function gives nothing back, but can change the prompt's variables.
+        ("Int64 count = 0", "0"),
+        ("Void Bump() { count = count + 1 }", ""),
+        ("Bump(); Bump(); count", "2"),
+        ("Void Early(Int64 n) { if (n > 0) { return } count = 100 }; Early(1); count", "2"),
+        // Parameters belong to the function, so the caller's `n` stays put.
+        ("Int64 n = 5; Square(3); n", "5"),
+        // Declaring a function again replaces it.
+        ("Int64 Square(Int64 n) { return n * n * n }; Square(2)", "8"),
+    ]);
+}
+
+#[test]
+fn recursion() {
+    check(&[
+        ("Int64 Fib(Int64 n) { if (n < 2) { return n } return Fib(n - 1) + Fib(n - 2) }", ""),
+        ("Fib(10)", "55"),
+        ("Fib(20)", "6765"),
+        ("Int64 Fact(Int64 n) { if (n <= 1) { return 1 } return n * Fact(n - 1) }", ""),
+        ("Fact(20)", "2432902008176640000"),
+        ("Fact(21)", "Error: number too big"),
+        // Runaway recursion stops with an error instead of crashing.
+        ("Int64 Forever(Int64 n) { return Forever(n + 1) }", ""),
+        ("Forever(0)", "Error: nested too deeply (over 40 KB of stack)"),
+        ("Void Spin() { Spin() }", ""),
+        ("Spin()", "Error: nested too deeply (over 40 KB of stack)"),
+        // Everything still works afterwards.
+        ("Fib(12)", "144"),
+    ]);
+}
+
+#[test]
+fn function_errors() {
+    check(&[
+        ("Nope(1)", "Error: 'Nope' is not a function"),
+        ("Int64 Half(Int64 n) { return n / 2 }", ""),
+        ("Half()", "Error: 'Half' takes 1 argument, not 0"),
+        ("Half(1, 2)", "Error: 'Half' takes 1 argument, not 2"),
+        ("Half(true)", "Error: 'n' needs Int64, not Boolean"),
+        ("Half(4", "Error: expected ',' or ')'"),
+        ("Int64 Bad(Int64 n) { return n > 0 }", ""),
+        ("Bad(1)", "Error: 'Bad' needs Int64, not Boolean"),
+        ("Int64 NoEnd(Int64 n) { n = n + 1 }", ""),
+        ("NoEnd(1)", "Error: 'NoEnd' must return a value"),
+        ("Void Quiet() { return }", ""),
+        ("Quiet() + 1", "Error: 'Quiet' is void and has no value to be used"),
+        ("Int64 v = Quiet()", "Error: 'Quiet' is void and has no value to be used"),
+        ("Void Loud() { return 5 }", ""),
+        ("Loud()", "Error: 'Loud' needs Void, not Int64"),
+        ("return 5", "Error: return is only allowed within a function body"),
+        ("Void x = 5", "Error: cannot assign void to a variable"),
+        ("if (true) { Int64 Inner() { return 1 } }", "Error: functions may only be declared at the prompt"),
+        ("Int64 Two(Int64 a, Int64 a) { return a }", "Error: 'a' is already declared"),
+        ("Int64 Pair(Int64 a Int64 b) { return a }", "Error: expected ',' or ')'"),
+        ("Int64 NoType(a) { return a }", "Error: expected a parameter type"),
+        // A function can't see the caller's block variables.
+        ("Int64 Peek() { return hidden }", ""),
+        ("if (true) { Int64 hidden = 1; Peek() }", "Error: 'hidden' is not a command or variable"),
     ]);
 }
