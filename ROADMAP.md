@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-19):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `for`, `break` and `continue`, shorthand assignment (`+=`, `++`), functions with recursion, and built-ins like `Console.WriteLine`. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 102 KB of its 128 KB budget.
+**Status (2026-11-19):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard, a free-list heap, and a shell. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `for`, `break` and `continue`, shorthand assignment (`+=`, `++`), functions with recursion, and built-ins like `Console.WriteLine`. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 102 KB of its 256 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -24,7 +24,7 @@
   - 1.3.2 Check that the BIOS has LBA extensions (int 13h, AH=41h)
   - 1.3.3 Read many sectors per call with AH=42h and a Disk Address Packet. This removes the cylinder/head/sector maths.
   - 1.3.4 Have build.ps1 work out the sector counts and pass them to NASM with `-D`. You'd no longer have to keep the two constants matched by hand.
-- **1.4 A bigger kernel** (needed once the kernel outgrows 128 KB, probably while building the language)
+- **1.4 A bigger kernel** (stage 2 loads up to 256 KB at 0x10000, and there's room up to the stack's guard page at 0x7F000, about 444 KB; needed once the kernel outgrows that)
   - 1.4.1 Load the kernel in chunks into a buffer below 1 MB, then copy each chunk above 1 MB. Real mode can't write past 1 MB directly.
   - 1.4.2 Move the stack (now at 0x90000) and the heap (hard-coded to 1–2 MB) out of the kernel's new space
 - **1.5 Pass information to the kernel**

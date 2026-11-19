@@ -1,6 +1,6 @@
 Set-Location $PSScriptRoot
 
-$kernelSectors = 256     # must match KERNEL SECTORS in boot/stage2.asm
+$kernelSectors = 512     # must match KERNEL SECTORS in boot/stage2.asm
 
 nasm -f bin boot/boot.asm -o boot.bin
 if ($LASTEXITCODE -ne 0) { exit 1 }
