@@ -59,6 +59,22 @@ fn wait_for_char() -> char {
     }
 }
 
+struct Kernel;
+
+impl calc::Host for Kernel {
+    fn write(&mut self, text: &str) {
+        print!("{}", text);
+    }
+
+    fn clear(&mut self) {
+        vga::clear_screen();
+    }
+
+    fn uptime_ms(&self) -> i64 {
+        (timer::ticks() * 1000 / timer::HZ) as i64
+    }
+}
+
 fn run_command(
     line: &str,
     history: &[String],
@@ -92,6 +108,8 @@ fn run_command(
             println!("for (;;) {{}}  repeat with a counter: for (Int64 i = 0; i < 5; i++) {{}}");
             println!("break        leave the loop at once; continue skips to the next round");
             println!("Int64 F() {{}} declare a function: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
+            println!("Console.*    WriteLine(x) prints x and a new line; also Write(x), Clear()");
+            println!("Timer.*      Uptime() is the time since the timer started, in ms");
         },
         "clear" => vga::clear_screen(),
         "echo" => {
@@ -120,7 +138,7 @@ fn run_command(
                 println!("{}{} {} = {}", constant, variable.value.type_name(), name, variable.value);
             }
         },
-        _ => match calc::evaluate(line, vars, functions) {
+        _ => match calc::evaluate(line, vars, functions, &mut Kernel) {
             Ok(Some(value)) => println!("{}", value),
             Ok(None) => {} // line ended with an `if` or `while`.
             Err(error) => println!("Error: {}", error),

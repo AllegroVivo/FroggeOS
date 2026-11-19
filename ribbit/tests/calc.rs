@@ -1,17 +1,39 @@
-use ribbit::calc::{Functions, Variables, evaluate};
+use ribbit::calc::{Functions, Host, Variables, evaluate};
+
+// Stands in for the kernel: keeps what Ribbit writes, and has a clock
+// that always says 1234 ms.
+struct TestHost {
+    output: String,
+}
+
+impl Host for TestHost {
+    fn write(&mut self, text: &str) {
+        self.output.push_str(text);
+    }
+
+    fn clear(&mut self) {
+        self.output.clear();
+    }
+
+    fn uptime_ms(&self) -> i64 {
+        1234
+    }
+}
 
 // Types the lines into one shell session and checks what the
-// shell would print after each one.
+// shell would print after each one: anything the line wrote,
+// then its value or error.
 fn check(session: &[(&str, &str)]) {
     let mut vars = Variables::new();
     let mut functions = Functions::new();
     for &(line, expected) in session {
-        let printed = match evaluate(line, &mut vars, &mut functions) {
+        let mut host = TestHost { output: String::new() };
+        let printed = match evaluate(line, &mut vars, &mut functions, &mut host) {
             Ok(Some(value)) => value.to_string(),
             Ok(None) => String::new(),
             Err(error) => format!("Error: {}", error),
         };
-        assert_eq!(printed, expected, "after typing: {}", line);
+        assert_eq!(host.output + &printed, expected, "after typing: {}", line);
     }
 }
 
@@ -443,6 +465,33 @@ fn strings() {
 }
 
 #[test]
+fn console() {
+    check(&[
+        ("Console.WriteLine(\"Hello\")", "Hello\n"),
+        ("Console.Write(\"a\"); Console.Write(1 + 1); Console.WriteLine()", "a2\n"),
+        ("Console.WriteLine(1 < 2)", "True\n"),
+        // Loops and functions can print as they run.
+        ("for (Int64 i = 1; i <= 3; i++) { Console.WriteLine(\"i = \" + i) }", "i = 1\ni = 2\ni = 3\n"),
+        ("Void Greet(String who) { Console.WriteLine(\"Hi, \" + who) }; Greet(\"Ribbit\")", "Hi, Ribbit\n"),
+        // A line's own value comes after what it wrote.
+        ("Console.Write(\"x is \"); 42", "x is 42"),
+        ("Console.Write(\"gone\"); Console.Clear(); Console.Write(\"fresh\")", "fresh"),
+        ("Timer.Uptime()", "1234"), // the test host's clock
+        ("Timer.Uptime() + 1", "1235"),
+        // Errors.
+        ("Console.ReadLine()", "Error: 'Console.ReadLine' is not a built-in function"),
+        ("Console.Write()", "Error: 'Console.Write' takes 1 argument, not 0"),
+        ("Console.WriteLine(1, 2)", "Error: 'Console.WriteLine' takes 1 argument, not 2"),
+        ("Console.Clear(1)", "Error: 'Console.Clear' takes 0 arguments, not 1"),
+        ("Console.WriteLine", "Error: expected '('"),
+        ("Console.", "Error: expected a name after '.'"),
+        ("Console.WriteLine(1 / 0)", "Error: division by zero"),
+        // As with a Void function of your own, it runs before the error.
+        ("Int64 n = Console.WriteLine(1)", "1\nError: 'Console.WriteLine' is void and has no value to be used"),
+    ]);
+}
+
+#[test]
 fn nesting() {
     // 38 brackets deep is the most that fits in a 78-character shell line.
     let deep = format!("{}1{}", "(".repeat(38), ")".repeat(38));
@@ -491,9 +540,9 @@ fn recursion() {
         ("Fact(21)", "Error: number too big"),
         // Runaway recursion stops with an error instead of crashing.
         ("Int64 Forever(Int64 n) { return Forever(n + 1) }", ""),
-        ("Forever(0)", "Error: nested too deeply (over 40 KB of stack)"),
+        ("Forever(0)", "Error: nested too deeply (over 48 KB of stack)"),
         ("Void Spin() { Spin() }", ""),
-        ("Spin()", "Error: nested too deeply (over 40 KB of stack)"),
+        ("Spin()", "Error: nested too deeply (over 48 KB of stack)"),
         // Everything still works afterwards.
         ("Fib(12)", "144"),
     ]);

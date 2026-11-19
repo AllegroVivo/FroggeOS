@@ -102,17 +102,25 @@ pub struct Function<'a> {
 // All declared functions by name.
 pub type Functions = BTreeMap<String, Function<'static>>;
 
+// What the language requires from the machine its being run on.
+pub trait Host {
+    fn write(&mut self, text: &str);
+    fn clear(&mut self);
+    fn uptime_ms(&self) -> i64;
+}
+
 // Variables seen by the currently executing code.
 struct Env<'a, 'v> {
     globals: &'v mut Variables,
     functions: &'v Functions,
+    host: &'v mut dyn Host,
     locals: Vec<(&'a str, Variable)>,
     depth: usize,
     stack_start: usize                  // where the stack was when the line began
 }
 
 // The most stack a line may use while it runs.
-const MAX_STACK: usize = 40 * 1024;
+const MAX_STACK: usize = 48 * 1024;
 
 // Roughly where the stack is now.
 fn stack_address() -> usize {
@@ -171,6 +179,8 @@ pub enum Error<'a> {
     VariableType { name: &'a str, wanted: &'static str, found: &'static str },
     AlreadyDeclared(&'a str),   // a name is previously declared within a context
     UnknownFunction(&'a str),   // calling a name that isn't a function
+    // Calling a `Namespace.Name` that isn't defined as a builtin.
+    UnknownBuiltIn(&'a str, &'a str),
     ArgumentCount { name: &'a str, wanted: usize, found: usize },
     NoReturn(&'a str),          // a function indicating a return without the `return` statement
     NoValue(&'a str),           // attempting to use the result of a void function
@@ -197,6 +207,9 @@ impl fmt::Display for Error<'_> {
                 write!(f, "'{}' needs {}, not {}", name, wanted, found)
             },
             Error::UnknownFunction(name) => write!(f, "'{}' is not a function", name),
+            Error::UnknownBuiltIn(namespace, name) => {
+                write!(f, "'{}.{}' is not a built-in function", namespace, name)
+            },
             Error::ArgumentCount { name, wanted, found } => {
                 let s = if *wanted == 1 { "" } else { "s" };
                 write!(f, "'{}' takes {} argument{}, not {}", name, wanted, s, found)
@@ -259,6 +272,7 @@ enum Token<'a> {
     ShiftLeft,          // <<
     ShiftRight,         // >>
     Str(&'a str),       // "Ribbit"
+    Dot,                // .
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -286,6 +300,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             '{' => Token::LeftBrace,
             '}' => Token::RightBrace,
             ',' => Token::Comma,
+            '.' => Token::Dot,
             '"' => {
                 let begin = start + 1;
                 loop {
@@ -480,6 +495,36 @@ enum Expr<'a> {
     And(Box<Expr<'a>>, Box<Expr<'a>>),
     Or(Box<Expr<'a>>, Box<Expr<'a>>),
     Call(&'a str, Vec<Expr<'a>>),
+    BuiltIn(BuiltIn, Vec<Expr<'a>>),
+}
+
+#[derive(Copy, Clone)]
+enum BuiltIn {
+    Write,              // Console.Write(str)
+    WriteLine,          // Console.WriteLine(str) / Console.WriteLine()
+    Clear,              // Console.Clear()
+    Uptime,             // Timer.Uptime()
+}
+
+impl BuiltIn {
+    fn find(namespace: &str, name: &str) -> Option<BuiltIn> {
+        Some(match (namespace, name) {
+            ("Console", "Write") => BuiltIn::Write,
+            ("Console", "WriteLine") => BuiltIn::WriteLine,
+            ("Console", "Clear") => BuiltIn::Clear,
+            ("Timer", "Uptime") => BuiltIn::Uptime,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            BuiltIn::Write => "Console.Write",
+            BuiltIn::WriteLine => "Console.WriteLine",
+            BuiltIn::Clear => "Console.Clear",
+            BuiltIn::Uptime => "Timer.Uptime",
+        }
+    }
 }
 
 enum Stmt<'a> {
@@ -801,16 +846,17 @@ impl<'a> Parser<'a> {
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
             Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
+                Ok(Expr::Call(name, self.arguments()?))
+            },
+            Some(Token::Name(namespace)) if self.peek() == Some(Token::Dot) => {
                 self.pos += 1;
-                let mut args = Vec::new();
-                while self.peek() != Some(Token::RightParen) {
-                    if !args.is_empty() {
-                        self.expect(Token::Comma, "expected ',' or ')'")?;
-                    }
-                    args.push(self.expression()?);
-                }
-                self.pos += 1; // the ')'
-                Ok(Expr::Call(name, args))
+                let Some(Token::Name(name)) = self.next() else {
+                    return Err(Error::Syntax("expected a name after '.'"));
+                };
+                let Some(builtin) = BuiltIn::find(namespace, name) else {
+                    return Err(Error::UnknownBuiltIn(namespace, name));
+                };
+                Ok(Expr::BuiltIn(builtin, self.arguments()?))
             },
             Some(Token::Name(_)) if matches!(self.peek(), Some(Token::PlusPlus | Token::MinusMinus)) => {
                 Err(Error::Syntax("'++' and '--' only work as a statement"))
@@ -829,6 +875,20 @@ impl<'a> Parser<'a> {
             Some(_) => Err(Error::Syntax("expected a number, variable, or '('")),
             None => Err(Error::Syntax("unexpected end of input")),
         }
+    }
+
+    // The arguments of a call.
+    fn arguments(&mut self) -> Result<Vec<Expr<'a>>, Error<'a>> {
+        self.expect(Token::LeftParen, "expected '('")?;
+        let mut args = Vec::new();
+        while self.peek() != Some(Token::RightParen) {
+            if !args.is_empty() {
+                self.expect(Token::Comma, "expected ',' or ')'")?;
+            }
+            args.push(self.expression()?);
+        }
+        self.pos += 1;
+        Ok(args)
     }
 }
 
@@ -901,6 +961,9 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
             result.ok_or(Error::Overflow)
         },
         Expr::Call(name, args) => call(name, args, vars)?.ok_or(Error::NoValue(name)),
+        Expr::BuiltIn(builtin, args) => {
+            call_builtin(*builtin, args, vars)?.ok_or(Error::NoValue(builtin.name()))
+        },
     }
 }
 
@@ -920,6 +983,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
     for stmt in stmts {
         last = match stmt {
             Stmt::Expr(Expr::Call(name, args)) => call(name, args, vars)?,
+            Stmt::Expr(Expr::BuiltIn(builtin, args)) => call_builtin(*builtin, args, vars)?,
             Stmt::Expr(expr) => Some(eval(expr, vars)?),
             Stmt::Declare {name, ty, value, constant } => {
                 let value = eval(value, vars)?;
@@ -1001,6 +1065,33 @@ fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Err
     Ok(flow)
 }
 
+// Runs a function built-in to the language.
+fn call_builtin<'a>(
+    builtin: BuiltIn,
+    args: &[Expr<'a>],
+    vars: &mut Env<'a, '_>,
+) -> Result<Option<Value>, Error<'a>> {
+    let mut values = Vec::new();
+    for arg in args {
+        values.push(eval(arg, vars)?);
+    }
+    match (builtin, values.as_slice()) {
+        (BuiltIn::Write, [value]) => vars.host.write(&format!("{}", value)),
+        (BuiltIn::WriteLine, []) => vars.host.write("\n"),
+        (BuiltIn::WriteLine, [value]) => vars.host.write(&format!("{}\n", value)),
+        (BuiltIn::Clear, []) => vars.host.clear(),
+        (BuiltIn::Uptime, []) => return Ok(Some(Value::Int64(vars.host.uptime_ms()))),
+        _ => {
+            let wanted = match builtin {
+                BuiltIn::Write | BuiltIn::WriteLine => 1,
+                BuiltIn::Clear | BuiltIn::Uptime => 0,
+            };
+            return Err(Error::ArgumentCount { name: builtin.name(), wanted, found: values.len() });
+        }
+    }
+    Ok(None)
+}
+
 // Calls a function and returns the value it gives back (or None).
 fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<Option<Value>, Error<'a>> {
     // `functions` is a shared reference. We need a copy to use in case `vars` changes.
@@ -1047,7 +1138,7 @@ fn parse<'a>(
         // A line that doesn't parse, and starts with a name that isn't a
         // variable or being assigned, is most likely mistyped.
         [Token::Name(name), second, ..]
-            if !matches!(second, Token::Equals | Token::LeftParen) && !vars.contains_key(name) =>
+            if !matches!(second, Token::Equals | Token::LeftParen | Token::Dot) && !vars.contains_key(name) =>
             {
                 Error::UnknownName(name)
             }
@@ -1064,6 +1155,7 @@ pub fn evaluate<'a>(
     text: &'a str,
     vars: &mut Variables,
     functions: &mut Functions,
+    host: &mut dyn Host,
 ) -> Result<Option<Value>, Error<'a>> {
     let (mut program, declared) = parse(text, vars)?;
     if !declared.is_empty() {
@@ -1075,7 +1167,7 @@ pub fn evaluate<'a>(
         program = forever;
     }
     let stack_start = stack_address();
-    let mut env = Env { globals: vars, functions, locals: Vec::new(), depth: 0, stack_start };
+    let mut env = Env { globals: vars, functions, host, locals: Vec::new(), depth: 0, stack_start };
     match run(&program, &mut env)? {
         Flow::Normal(value) | Flow::Return(value) => Ok(value),
         Flow::Break | Flow::Continue => Ok(None),
