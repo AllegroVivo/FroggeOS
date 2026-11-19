@@ -53,7 +53,7 @@ fn syntax_errors() {
         ("1 2", "Error: expected ';'"),
         ("2x", "Error: expected ';'"),
         ("3 $ 4", "Error: unexpected character '$'"),
-        ("1 & 2", "Error: unexpected character '&'"),
+        ("1 # 2", "Error: unexpected character '#'"),
         ("1 < = 2", "Error: expected a number, variable, or '('"),
     ]);
 }
@@ -352,6 +352,50 @@ fn shorthand() {
         // Not inside an expression yet (LANGUAGE.md §6).
         ("Int64 y = x++", "Error: '++' and '--' only work as a statement"),
         ("x", "1"),
+    ]);
+}
+
+#[test]
+fn bits() {
+    check(&[
+        ("0x2A", "42"),
+        ("0xff + 0XFF", "510"),
+        ("0x7FFFFFFFFFFFFFFF", "9223372036854775807"),
+        ("0x8000000000000000", "Error: number too big"),
+        ("0x", "Error: expected hex digits after '0x'"),
+        ("0xG", "Error: expected hex digits after '0x'"),
+        ("12 & 10", "8"),
+        ("12 | 10", "14"),
+        ("12 ^ 10", "6"),
+        ("~0", "-1"),
+        ("~5", "-6"),
+        ("1 << 4", "16"),
+        ("-16 >> 2", "-4"), // keeps the sign
+        // As in C#: no overflow check, and only the low 6 bits of the count.
+        ("1 << 63", "-9223372036854775808"),
+        ("1 << 64", "1"),
+        // C#'s order: << comes after + and before the comparisons, then & ^ |.
+        ("1 << 2 + 1", "8"),
+        ("1 | 2 ^ 3 & 4", "3"), // 1 | (2 ^ (3 & 4))
+        ("0xF0 & ~0x30 | 1 << 2", "196"),
+        // C's trap: x & 1 == 0 means x & (1 == 0). Strict Booleans catch it.
+        ("Int64 x = 6; x & 1 == 0", "Error: '&' needs Int64, not Boolean"),
+        ("(x & 1) == 0", "True"),
+        // On Booleans, & | ^ always use both sides: no short-circuit.
+        ("true & false", "False"),
+        ("true | false", "True"),
+        ("true ^ true", "False"),
+        ("false & 1 / 0 == 0", "Error: division by zero"),
+        ("false && 1 / 0 == 0", "False"),
+        ("true & 1", "Error: '&' needs Boolean, not Int64"),
+        ("~true", "Error: '~' needs Int64, not Boolean"),
+        // The shorthands.
+        ("Int64 f = 0xF; f &= 6", "6"),
+        ("f |= 0x10", "22"),
+        ("f ^= 2", "20"),
+        ("f <<= 2", "80"),
+        ("f >>= 4", "5"),
+        ("Boolean ok = true; ok &= false", "False"),
     ]);
 }
 

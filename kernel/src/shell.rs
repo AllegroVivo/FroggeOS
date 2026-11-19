@@ -79,7 +79,7 @@ fn run_command(
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("vars         list the stored variables");
-            println!("<expression> calculate it, e.g. 2 * (3 + 4) - 10 / 5");
+            println!("<expression> calculate it: 2 * (3 + 4) - 10 / 5, or bits: 0xF0 & ~x | 1 << 4");
             println!("a < b        compare, giving True or False (also == != <= > >=)");
             println!("a && b       and: both true; also a || b (or: either one) and !a (not)");
             println!("Int64 x = 5  declare x; also Boolean b = true, var y = x + 1, const Int64 N = 3");

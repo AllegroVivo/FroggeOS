@@ -123,7 +123,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 - **`String` works like C#'s.** It's immutable and supports `+`, `.Length` and `s[i]` (which gives a `Char`).
 - **`Object` is the base of every class.** `is`, `as` and `typeof` need it.
 - **Conversions follow C#.** Widening is automatic (`Int32` to `Int64`). Narrowing needs a cast: `(Byte)x`. Integer literals adapt to the type they're used with.
-- **Overflow and division by zero are always errors.** C# wraps silently on overflow by default, so this is one place we differ.
+- **Overflow and division by zero are always errors.** C# wraps silently on overflow by default, so this is one place we differ. Shifts are the exception, as in C#: bits shifted out are lost and only the low 6 bits of the count are used, so `1 << 63` is the most negative Int64 and `1 << 64` is 1.
 - **Everything starts zeroed:** `0`, `false`, `'\0'` or `null`. C# instead refuses to compile a read of an unassigned local; zeroing is simpler.
 - **References can be `null`.** Using a null reference is an error.
 

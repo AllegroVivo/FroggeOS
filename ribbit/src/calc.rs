@@ -206,45 +206,51 @@ impl fmt::Display for Error<'_> {
 // ``PartialEq`` allows for comparison with ``==``.
 #[derive(Clone, Copy, PartialEq)]
 enum Token<'a> {
-    Number(i64),
-    Name(&'a str),
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    LeftParen,
-    RightParen,
-    Equals,
-    EqualEqual,
-    NotEqual,
-    Less,
-    LessEqual,
-    Greater,
-    GreaterEqual,
-    Semicolon,
-    LeftBrace,
-    RightBrace,
-    If,
-    Else,
-    While,
-    Bang,
-    AndAnd,
-    OrOr,
-    True,
-    False,
-    Var,
-    Const,
-    Type(Type),
-    Comma,
-    Return,
-    Void,
-    For,
-    Break,
-    Continue,
-    Compound(Op),
-    PlusPlus,
-    MinusMinus,
+    Number(i64),        // 420
+    Name(&'a str),      // Name
+    Plus,               // +
+    Minus,              // -
+    Star,               // *
+    Slash,              // /
+    Percent,            // %
+    LeftParen,          // (
+    RightParen,         // )
+    Equals,             // =
+    EqualEqual,         // ==
+    NotEqual,           // !=
+    Less,               // <
+    LessEqual,          // <=
+    Greater,            // >
+    GreaterEqual,       // >=
+    Semicolon,          // ;
+    LeftBrace,          // {
+    RightBrace,         // }
+    If,                 // if
+    Else,               // else
+    While,              // while
+    Bang,               // !
+    AndAnd,             // &&
+    OrOr,               // ||
+    True,               // True
+    False,              // False
+    Var,                // var
+    Const,              // const
+    Type(Type),         // I64
+    Comma,              // ,
+    Return,             // return
+    Void,               // Void
+    For,                // for
+    Break,              // break
+    Continue,           // continue
+    Compound(Op),       // +=
+    PlusPlus,           // ++
+    MinusMinus,         // --
+    Amp,                // &
+    Pipe,               // |
+    Caret,              // ^
+    Tilde,              // ~
+    ShiftLeft,          // <<
+    ShiftRight,         // >>
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -274,6 +280,23 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             ',' => Token::Comma,
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
             '|' if chars.next_if(|&(_, d)| d == '|').is_some() => Token::OrOr,
+            '&' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::BitAnd),
+            '|' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::BitOr),
+            '^' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::BitXor),
+            '&' => Token::Amp,
+            '|' => Token::Pipe,
+            '^' => Token::Caret,
+            '~' => Token::Tilde,
+            '<' | '>' if chars.next_if(|&(_, d)| d == c).is_some() => {
+                let equals_next = chars.next_if(|&(_, d)| d == '=').is_some();
+                match(c, equals_next) {
+                    ('<', false) => Token::ShiftLeft,
+                    ('<', true) => Token::Compound(Op::ShiftLeft),
+                    ('>', false) => Token::ShiftRight,
+                    ('>', true) => Token::Compound(Op::ShiftRight),
+                    _ => return Err(Error::BadChar(c)),
+                }
+            },
             '=' | '!' | '<' | '>' => {
                 // NOTE: ``==``, ``!=``, ``<=`` and ``>=`` are two characters in one token.
                 let equals_next = chars.next_if(|&(_, d)| d == '=').is_some();
@@ -288,6 +311,22 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     ('>', true) => Token::GreaterEqual,
                     _ => return Err(Error::BadChar(c)),
                 }
+            },
+            '0' if chars.next_if(|&(_, d)| d == 'x' || d == 'X').is_some() => {
+                let mut value: i64 = 0;
+                let mut digits = 0;
+                while let Some(digit) = chars.peek().and_then(|&(_, d)| d.to_digit(16)) {
+                    chars.next();
+                    digits += 1;
+                    value = value
+                        .checked_mul(16)
+                        .and_then(|v| v.checked_add(digit as i64))
+                        .ok_or(Error::Overflow)?;
+                }
+                if digits == 0 {
+                    return Err(Error::Syntax("expected hex digits after '0x'"));
+                }
+                Token::Number(value)
             },
             '0'..='9' => {
                 let mut value = (c as u8 - b'0') as i64;
@@ -351,6 +390,11 @@ enum Op {
     LessEqual,
     Greater,
     GreaterEqual,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl Op {
@@ -367,6 +411,11 @@ impl Op {
             Op::LessEqual => "'<='",
             Op::Greater => "'>'",
             Op::GreaterEqual => "'>='",
+            Op::BitAnd => "'&'",
+            Op::BitOr => "'|'",
+            Op::BitXor => "'^'",
+            Op::ShiftLeft => "'<<'",
+            Op::ShiftRight => "'>>'",
         }
     }
 }
@@ -381,17 +430,22 @@ fn infix(token: Token<'_>) -> Option<(u8, Infix)> {
     Some(match token {
         Token::OrOr => (1, Infix::Or),
         Token::AndAnd => (2, Infix::And),
-        Token::EqualEqual => (3, Infix::Op(Op::Equal)),
-        Token::NotEqual => (3, Infix::Op(Op::NotEqual)),
-        Token::Less => (4, Infix::Op(Op::Less)),
-        Token::LessEqual => (4, Infix::Op(Op::LessEqual)),
-        Token::Greater => (4, Infix::Op(Op::Greater)),
-        Token::GreaterEqual => (4, Infix::Op(Op::GreaterEqual)),
-        Token::Plus => (5, Infix::Op(Op::Add)),
-        Token::Minus => (5, Infix::Op(Op::Subtract)),
-        Token::Star => (6, Infix::Op(Op::Multiply)),
-        Token::Slash => (6, Infix::Op(Op::Divide)),
-        Token::Percent => (6, Infix::Op(Op::Remainder)),
+        Token::Pipe => (3, Infix::Op(Op::BitOr)),
+        Token::Caret => (4, Infix::Op(Op::BitXor)),
+        Token::Amp => (5, Infix::Op(Op::BitAnd)),
+        Token::EqualEqual => (6, Infix::Op(Op::Equal)),
+        Token::NotEqual => (6, Infix::Op(Op::NotEqual)),
+        Token::Less => (7, Infix::Op(Op::Less)),
+        Token::LessEqual => (7, Infix::Op(Op::LessEqual)),
+        Token::Greater => (7, Infix::Op(Op::Greater)),
+        Token::GreaterEqual => (7, Infix::Op(Op::GreaterEqual)),
+        Token::ShiftLeft => (8, Infix::Op(Op::ShiftLeft)),
+        Token::ShiftRight => (8, Infix::Op(Op::ShiftRight)),
+        Token::Plus => (9, Infix::Op(Op::Add)),
+        Token::Minus => (9, Infix::Op(Op::Subtract)),
+        Token::Star => (10, Infix::Op(Op::Multiply)),
+        Token::Slash => (10, Infix::Op(Op::Divide)),
+        Token::Percent => (10, Infix::Op(Op::Remainder)),
         _ => return None,
     })
 }
@@ -401,6 +455,7 @@ enum Expr<'a> {
     Variable(&'a str),
     Negate(Box<Expr<'a>>),
     Not(Box<Expr<'a>>),
+    BitNot(Box<Expr<'a>>),
     Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),
     And(Box<Expr<'a>>, Box<Expr<'a>>),
     Or(Box<Expr<'a>>, Box<Expr<'a>>),
@@ -688,6 +743,10 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             return Ok(Expr::Not(Box::new(self.unary()?)));
         }
+        if self.peek() == Some(Token::Tilde) {
+            self.pos += 1;
+            return Ok(Expr::BitNot(Box::new(self.unary()?)));
+        }
         self.primary()
     }
 
@@ -740,6 +799,7 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
             n.checked_neg().map(Value::Int64).ok_or(Error::Overflow)
         },
         Expr::Not(inner) => Ok(Value::Boolean(!eval(inner, vars)?.boolean("'!'")?)),
+        Expr::BitNot(inner) => Ok(Value::Int64(!eval(inner, vars)?.int64("'~'")?)),
         Expr::And(left, right) => Ok(Value::Boolean(
             eval(left, vars)?.boolean("'&&'")? && eval(right, vars)?.boolean("'&&'")?,
         )),
@@ -758,7 +818,10 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
                 (Op::NotEqual, Value::Boolean(a), Value::Boolean(b)) => {
                     return Ok(Value::Boolean(a != b));
                 }
-                (Op::Equal | Op::NotEqual, a, b) => {
+                (Op::BitAnd, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a & b)),
+                (Op::BitOr, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a | b)),
+                (Op::BitXor, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a ^ b)),
+                (Op::Equal | Op::NotEqual | Op::BitAnd | Op::BitOr | Op::BitXor, a, b) => {
                     return Err(Error::WrongType {place, wanted: a.type_name(), found: b.type_name() });
                 },
                 _ => return Err(Error::WrongType {place, wanted: "Int64", found: "Boolean" }),
@@ -776,6 +839,11 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
                 Op::LessEqual => Some(Value::Boolean(a <= b)),
                 Op::Greater => Some(Value::Boolean(a > b)),
                 Op::GreaterEqual => Some(Value::Boolean(a >= b)),
+                Op::BitAnd => Some(Value::Int64(a & b)),
+                Op::BitOr => Some(Value::Int64(a | b)),
+                Op::BitXor => Some(Value::Int64(a ^ b)),
+                Op::ShiftLeft => Some(Value::Int64(a.wrapping_shl(b as u32))),
+                Op::ShiftRight => Some(Value::Int64(a.wrapping_shr(b as u32))),
             };
             result.ok_or(Error::Overflow)
         },
