@@ -82,6 +82,7 @@ fn run_command(
             println!("<expression> calculate it: 2 * (3 + 4) - 10 / 5, or bits: 0xF0 & ~x | 1 << 4");
             println!("a < b        compare, giving True or False (also == != <= > >=)");
             println!("a && b       and: both true; also a || b (or: either one) and !a (not)");
+            println!("\"text\"       a String: \"Hi, \" + name, also == and escapes \\n \\t \\\\ \\\" \\0");
             println!("Int64 x = 5  declare x; also Boolean b = true, var y = x + 1, const Int64 N = 3");
             println!("x = <expr>   change a declared variable: x = x + 1, x += 1 or x++");
             println!("a; b         do a, then b");

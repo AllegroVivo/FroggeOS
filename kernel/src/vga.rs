@@ -89,6 +89,12 @@ impl fmt::Write for Writer {
                 // Printable characters are passed thru as is.
                 0x20..=0x7E | b'\n' => self.write_byte(byte),
                 0x08 => self.backspace(),
+                b'\t' => {
+                    self.write_byte(b' ');
+                    while self.col % 4 != 0 {
+                        self.write_byte(b' ');
+                    }
+                },
                 // Anything else shows as an unrenderable block.
                 _ => self.write_byte(0xFE),
             }

@@ -2,27 +2,31 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
 // A value that the language works with.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Value {
     Int64(i64),
     Boolean(bool),
+    String(Rc<String>)
 }
 
 impl Value {
-    fn type_of(self) -> Type {
+    fn type_of(&self) -> Type {
         match self {
             Value::Int64(_) => Type::Int64,
             Value::Boolean(_) => Type::Boolean,
+            Value::String(_) => Type::String,
         }
     }
 
-    pub fn type_name(self) -> &'static str {
+    pub fn type_name(&self) -> &'static str {
         self.type_of().name()
     }
 
@@ -47,6 +51,7 @@ impl fmt::Display for Value {
             Value::Int64(n) => write!(f, "{}", n),
             Value::Boolean(true) => write!(f, "True"),
             Value::Boolean(false) => write!(f, "False"),
+            Value::String(s) => write!(f, "{}", s),
         }
     }
 }
@@ -56,6 +61,7 @@ impl fmt::Display for Value {
 pub enum Type {
     Int64,
     Boolean,
+    String,
 }
 
 impl Type {
@@ -63,14 +69,16 @@ impl Type {
         match self {
             Type::Int64 => "Int64",
             Type::Boolean => "Boolean",
+            Type::String => "String",
         }
     }
 
     // The value of a variable declared with no assignment.
-    fn zero(self) -> Value {
+    fn zero(self) -> Option<Value> {
         match self {
-            Type::Int64 => Value::Int64(0),
-            Type::Boolean => Value::Boolean(false),
+            Type::Int64 => Some(Value::Int64(0)),
+            Type::Boolean => Some(Value::Boolean(false)),
+            Type::String => None,
         }
     }
 }
@@ -79,7 +87,6 @@ impl Type {
 pub struct Variable {
     pub value: Value,
     pub constant: bool,
-
 }
 
 // All declared variables by name.
@@ -251,6 +258,7 @@ enum Token<'a> {
     Tilde,              // ~
     ShiftLeft,          // <<
     ShiftRight,         // >>
+    Str(&'a str),       // "Ribbit"
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -278,6 +286,17 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             '{' => Token::LeftBrace,
             '}' => Token::RightBrace,
             ',' => Token::Comma,
+            '"' => {
+                let begin = start + 1;
+                loop {
+                    match chars.next() {
+                        Some((end, '"')) => break Token::Str(&text[begin..end]),
+                        Some((_, '\\')) => { chars.next(); }
+                        Some(_) => {},
+                        None => return Err(Error::Syntax("a string is missing a closing \"")),
+                    }
+                }
+            },
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
             '|' if chars.next_if(|&(_, d)| d == '|').is_some() => Token::OrOr,
             '&' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::BitAnd),
@@ -362,6 +381,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     "const" => Token::Const,
                     "Int64" => Token::Type(Type::Int64),
                     "Boolean" => Token::Type(Type::Boolean),
+                    "String" => Token::Type(Type::String),
                     "return" => Token::Return,
                     "Void" => Token::Void,
                     "for" => Token::For,
@@ -481,6 +501,27 @@ enum Stmt<'a> {
 
 fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
     Stmt::Assign(name, Expr::Binary(op, Box::new(Expr::Variable(name)), Box::new(value)))
+}
+
+// The text a string literal stands for. (e.g. '\n' -> 'new line')
+fn unescape<'a>(raw: &str) -> Result<Rc<String>, Error<'a>> {
+    let mut text = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            text.push(c);
+            continue;
+        }
+        text.push(match chars.next() {
+            Some('n') => '\n',
+            Some('t') => '\t',
+            Some('\\') => '\\',
+            Some('"') => '"',
+            Some('0') => '\0',
+            _ => return Err(Error::Syntax("unknown escape sequence")),
+        });
+    }
+    Ok(Rc::new(text))
 }
 
 struct Parser<'a> {
@@ -636,7 +677,10 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 self.expression()?
             }
-            (_, Some(ty)) if !constant => Expr::Literal(ty.zero()),
+            (_, Some(ty)) if !constant => match ty.zero() {
+                Some(zero) => Expr::Literal(zero),
+                None => return Err(Error::Syntax("a String must be assigned a value")),
+            },
             _ => return Err(Error::Syntax("expected '='")),
         };
         Ok(Stmt::Declare {name, ty, value, constant })
@@ -755,6 +799,7 @@ impl<'a> Parser<'a> {
             Some(Token::Number(n)) => Ok(Expr::Literal(Value::Int64(n))),
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
+            Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
                 self.pos += 1;
                 let mut args = Vec::new();
@@ -790,9 +835,9 @@ impl<'a> Parser<'a> {
 fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
     vars.check_stack()?;
     match expr {
-        Expr::Literal(value) => Ok(*value),
+        Expr::Literal(value) => Ok(value.clone()),
         Expr::Variable(name) => {
-            vars.get(*name).map(|variable| variable.value).ok_or(Error::UnknownName(name))
+            vars.get(*name).map(|variable| variable.value.clone()).ok_or(Error::UnknownName(name))
         },
         Expr::Negate(inner) => {
             let n = eval(inner, vars)?.int64("'-'")?;
@@ -821,10 +866,18 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
                 (Op::BitAnd, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a & b)),
                 (Op::BitOr, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a | b)),
                 (Op::BitXor, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a ^ b)),
-                (Op::Equal | Op::NotEqual | Op::BitAnd | Op::BitOr | Op::BitXor, a, b) => {
+                (Op::Equal, Value::String(a), Value::String(b)) => return Ok(Value::Boolean(a == b)),
+                (Op::NotEqual, Value::String(a), Value::String(b)) => return Ok(Value::Boolean(a != b)),
+                (Op::Add, a @ Value::String(_), b) | (Op::Add, a, b @ Value::String(_)) => {
+                    return Ok(Value::String(Rc::new(format!("{}{}", a, b))))
+                },
+                (Op::Equal | Op::NotEqual | Op::BitAnd | Op::BitOr | Op::BitXor, a, b) if a.type_of() != b.type_of() => {
                     return Err(Error::WrongType {place, wanted: a.type_name(), found: b.type_name() });
                 },
-                _ => return Err(Error::WrongType {place, wanted: "Int64", found: "Boolean" }),
+                (_, a, b) => {
+                    let found = if matches!(a, Value::Int64(_)) { b.type_name() } else { a.type_name() };
+                    return Err(Error::WrongType {place, wanted: "Int64", found });
+                },
             };
             let result = match op {
                 Op::Add => a.checked_add(b).map(Value::Int64),
@@ -874,7 +927,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                 if value.type_of() != ty {
                     return Err(Error::VariableType { name, wanted: ty.name(), found: value.type_name() });
                 }
-                vars.declare(name, Variable { value, constant: *constant })?;
+                vars.declare(name, Variable { value: value.clone(), constant: *constant })?;
                 Some(value)
             },
             Stmt::Assign(name, expr) => {
@@ -889,7 +942,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                     let wanted = variable.value.type_name();
                     return Err(Error::VariableType { name, wanted, found: value.type_name() });
                 }
-                variable.value = value;
+                variable.value = value.clone();
                 Some(value)
             },
             Stmt::If(condition, then_block, else_block) => {

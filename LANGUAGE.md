@@ -1,6 +1,6 @@
 # Ribbit: the FroggeOS language
 
-**Status (2026-11-17):** design decided (roadmap ⚑ 6.1). Apart from the calculator, none of this is built yet. Ribbit scripts are `.rbt` files, and the Rust crate is `ribbit`.
+**Status (2026-11-19):** design decided (roadmap ⚑ 6.1). Ribbit's core now runs at the FroggeOS prompt: Int64, Boolean and String values, blocks, loops, functions and recursion. ROADMAP.md tracks what's built. Ribbit scripts are `.rbt` files, and the Rust crate is `ribbit`.
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
@@ -120,7 +120,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 
 - **`Boolean` is strict, as in C#.** Comparisons give `true` or `false`, and `if`, `while`, `!`, `&&` and `||` only accept a Boolean. `if (n)` has to be written `if (n != 0)`. It prints as `True` or `False`, like C#'s `ToString()`.
 - **A `Char` is 1 byte,** a code-page-437 character: what the VGA text screen shows and what the keyboard driver produces. C#'s Char is 2 bytes (UTF-16). `Char` and `Byte` are the same size but different types: a `Byte` prints as a number (`70`), a `Char` as text (`F`).
-- **`String` works like C#'s.** It's immutable and supports `+`, `.Length` and `s[i]` (which gives a `Char`).
+- **`String` works like C#'s.** It's immutable and supports `+`, `.Length` and `s[i]` (which gives a `Char`). At the prompt it prints as its text, without quotes, as `Console.WriteLine` would. Until Ribbit has `null`, a String must be given a value: `String s;` is an error.
 - **`Object` is the base of every class.** `is`, `as` and `typeof` need it.
 - **Conversions follow C#.** Widening is automatic (`Int32` to `Int64`). Narrowing needs a cast: `(Byte)x`. Integer literals adapt to the type they're used with.
 - **Overflow and division by zero are always errors.** C# wraps silently on overflow by default, so this is one place we differ. Shifts are the exception, as in C#: bits shifted out are lost and only the low 6 bits of the count are used, so `1 << 63` is the most negative Int64 and `1 << 64` is 1.
@@ -186,7 +186,7 @@ C's precedence has a trap: `x & 1 == 0` means `x & (1 == 0)`. Strict Booleans tu
 - **Calls** always need `()`.
 - **Parameters:** `params Int64[] values`, `ref Int64 x` and `out Int64 result`
 - **Built-ins:** `extern Void Beep(Int64 hz, Int64 ms);` declares a function whose body is written in Rust. The built-in library becomes a FroggeOS source file full of these.
-- **Recursion limit:** a call that recurses too deep reports an error instead of overflowing the kernel stack (6.5.2). Ribbit code may use 40 KB of the kernel's 64 KB stack, which is about 45 nested calls of a small function.
+- **Recursion limit:** a call that recurses too deep reports an error instead of overflowing the kernel stack (6.5.2). Ribbit code may use 40 KB of the kernel's 64 KB stack, which is about 30 nested calls of a small function.
 
 ```csharp
 delegate Int64 Op(Int64 a, Int64 b);

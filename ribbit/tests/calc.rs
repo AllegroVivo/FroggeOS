@@ -400,6 +400,49 @@ fn bits() {
 }
 
 #[test]
+fn strings() {
+    check(&[
+        // A String prints as its text, without quotes.
+        ("\"hi\"", "hi"),
+        ("\"\"", ""),
+        ("\"Hi, \" + \"there\"", "Hi, there"),
+        ("String name = \"Ribbit\"", "Ribbit"),
+        ("\"Hello, \" + name + \"!\"", "Hello, Ribbit!"),
+        ("var s = \"a\"; s += \"b\"; s", "ab"),
+        ("const String Greeting = \"hey\"", "hey"),
+        // As in C#, + with a String turns the other side into text...
+        ("\"x = \" + 6 * 7", "x = 42"),
+        ("\"ok: \" + (1 < 2)", "ok: True"),
+        // ...working left to right, like any other +.
+        ("1 + 2 + \"!\"", "3!"),
+        ("\"!\" + 1 + 2", "!12"),
+        // Two Strings are equal when they hold the same text.
+        ("name == \"Rib\" + \"bit\"", "True"),
+        ("name != \"Ribbit\"", "False"),
+        // The escapes: \" \\ \n \t \0
+        ("\"a\\\"b\\\\c\"", "a\"b\\c"),
+        ("\"line\\nnext\"", "line\nnext"),
+        ("\"tab\\there\"", "tab\there"),
+        ("\"nul\\0\"", "nul\0"),
+        // Functions can take and give back Strings.
+        ("String Twice(String t) { return t + t }", ""),
+        ("Twice(\"ab\")", "abab"),
+        // Errors.
+        ("\"abc", "Error: a string is missing a closing \""),
+        ("\"a\\qb\"", "Error: unknown escape sequence"),
+        ("String t", "Error: a String must be assigned a value"),
+        ("Greeting += \"!\"", "Error: 'Greeting' is a constant"),
+        ("name - 1", "Error: '-' needs Int64, not String"),
+        ("-name", "Error: '-' needs Int64, not String"),
+        ("\"a\" < \"b\"", "Error: '<' needs Int64, not String"),
+        ("\"a\" & \"b\"", "Error: '&' needs Int64, not String"),
+        ("name == 5", "Error: '==' needs String, not Int64"),
+        ("Int64 n = \"5\"", "Error: 'n' needs Int64, not String"),
+        ("if (name) {}", "Error: if needs Boolean, not String"),
+    ]);
+}
+
+#[test]
 fn nesting() {
     // 38 brackets deep is the most that fits in a 78-character shell line.
     let deep = format!("{}1{}", "(".repeat(38), ")".repeat(38));
