@@ -171,7 +171,7 @@ fn run_command(
     }
 }
 
-// Displays a mistake found during preprocessing.
+// Displays a mistake found during processing.
 fn mark(code: &str, at: usize, error: &calc::Error) {
     let start = code [..at].rfind('\n').map_or(0, |i| i + 1);
     let end = code[at..].find('\n').map_or(code.len(), |i| at + i);

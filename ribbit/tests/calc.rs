@@ -559,12 +559,36 @@ fn multi_line() {
 
 #[test]
 fn nesting() {
-    // 38 brackets deep is the most that fits in a 78-character shell line.
+    // A whole 78-character shell line of brackets, 38 deep, fits easily.
     let deep = format!("{}1{}", "(".repeat(38), ")".repeat(38));
     check(&[
         ("var a=0;var b=0;while(a<3){a=a+1;if(a==2){b=b+10}else{b=b+1}};b", "12"),
         ("var i=0;var t=0;while(i<3){var j=0;while(j<4){t=t+1;j=j+1};i=i+1};t", "12"),
         (&deep, "1"),
+    ]);
+}
+
+// `inside`, in `depth` pairs of brackets.
+fn bracketed(depth: usize, inside: &str) -> String {
+    format!("{}{}{}", "(".repeat(depth), inside, ")".repeat(depth))
+}
+
+#[test]
+fn deep_nesting() {
+    // Reading a line that nests too deeply stops with an error instead of
+    // overflowing the stack, whatever does the nesting.
+    let too_deep = "Error: nested too deeply (over 48 KB of stack)";
+    let in_hole = |depth| format!("$\"{{{}}}\"", bracketed(depth, "1"));
+    check(&[
+        (&bracketed(200, "1"), too_deep),
+        (&format!("{}true", "!".repeat(1000)), too_deep),
+        (&format!("{}{}", "if (true) {\n".repeat(100), "}\n".repeat(100)), too_deep),
+        (&format!("{}{{ }}", "if (false) { } else ".repeat(300)), too_deep),
+        (&in_hole(200), too_deep),
+        // A {hole} shares its line's budget: 35 brackets around one and 35
+        // in it are too many together, though either half alone would fit.
+        (&bracketed(20, &in_hole(20)), "1"),
+        (&bracketed(35, &in_hole(35)), too_deep),
     ]);
 }
 

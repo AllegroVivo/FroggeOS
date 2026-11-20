@@ -121,7 +121,7 @@ struct Env<'a, 'v> {
     stack_start: usize                  // where the stack was when the line began
 }
 
-// The most stack a line may use while it runs.
+// The most stack a line may use while it reads and runs.
 const MAX_STACK: usize = 48 * 1024;
 
 // Roughly where the stack is now.
@@ -606,8 +606,9 @@ fn join<'a>(a: Expr<'a>, b: Expr<'a>) -> Expr<'a> {
 }
 
 // Functionally breaks string interpolations ($"x = {x}!") into their components.
+#[inline(never)]
 #[allow(clippy::needless_lifetimes)]
-fn interpolation<'a>(raw: &'a str) -> Result<Expr<'a>, Error<'a>> {
+fn interpolation<'a>(raw: &'a str, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
     let mut joined = Expr::Literal(Value::String(Rc::new(String::new())));
     let mut text = String::new();
     let mut chars = raw.char_indices().peekable();
@@ -627,7 +628,7 @@ fn interpolation<'a>(raw: &'a str) -> Result<Expr<'a>, Error<'a>> {
                     let piece = core::mem::take(&mut text);
                     joined = join(joined, Expr::Literal(Value::String(Rc::new(piece))));
                 }
-                joined = join(joined, hole(&raw[start + 1..end])?);
+                joined = join(joined, hole(&raw[start + 1..end], stack_start)?);
             },
             '}' => return Err(Error::Syntax("missing opening '{' for string interpolation. escape brackets with '}}'")),
             '\\' => text.push(escaped(chars.next().map(|(_, d)| d))?),
@@ -642,13 +643,13 @@ fn interpolation<'a>(raw: &'a str) -> Result<Expr<'a>, Error<'a>> {
 
 // A single interpolate {hole} in a string.
 #[allow(clippy::needless_lifetimes)]
-fn hole<'a>(inside: &'a str) -> Result<Expr<'a>, Error<'a>> {
+fn hole<'a>(inside: &'a str, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
     let (code, format) = match inside.split_once(':') {
         Some((code, format)) => (code, Some(format)),
         None => (inside, None),
     };
     let (tokens, spans) = tokenize(code).map_err(|(error, _)| error)?;
-    let mut parser = Parser::new(tokens, spans);
+    let mut parser = Parser::new(tokens, spans, stack_start);
     let value = parser.expression()?;
     if parser.pos < parser.tokens.len() {
         return Err(Error::Syntax("an interpolate {hole} may only hold one expression"));
@@ -686,15 +687,16 @@ struct Parser<'a> {
     depth: usize,
     in_function: bool,
     loops: usize,
+    stack_start: usize,
     functions: Vec<(&'a str, Function<'a>)>,
 }
 
 impl<'a> Parser<'a> {
 
-    fn new(tokens: Vec<Token<'a>>, spans: Vec<(usize, usize)>) -> Parser<'a> {
+    fn new(tokens: Vec<Token<'a>>, spans: Vec<(usize, usize)>, stack_start: usize) -> Parser<'a> {
         Parser {
             tokens, spans, pos: 0, looked: 0, missing: false,
-            depth: 0, in_function: false, loops: 0, functions: Vec::new()
+            depth: 0, in_function: false, loops: 0, stack_start, functions: Vec::new()
         }
     }
 
@@ -731,6 +733,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // Stops a line that nests deeply enough to exceed `MAX_STACK`.
+    fn check_stack(&self) -> Result<(), Error<'a>> {
+        if self.stack_start.saturating_sub(stack_address()) > MAX_STACK {
+            return Err(Error::TooDeep);
+        }
+        Ok(())
+    }
+
     // A whole line, or the inside of a block. Statements are separated by `;`.
     // The `;` can be left out before a `}` or the end of the input, and after
     // an if or while, which already end with a `}`.
@@ -759,6 +769,7 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Stmt<'a>, Error<'a>> {
+        self.check_stack()?;
         // Look at the next two tokens. ``=`` starts an assignment, ``==`` does not.
         match (self.peek(), self.tokens.get(self.pos + 1).copied()) {
             (Some(Token::If), _) => {
@@ -955,6 +966,7 @@ impl<'a> Parser<'a> {
     }
 
     fn unary(&mut self) -> Result<Expr<'a>, Error<'a>> {
+        self.check_stack()?;
         if self.peek() == Some(Token::Minus) {
             self.pos += 1;
             return Ok(Expr::Negate(Box::new(self.unary()?)));
@@ -976,7 +988,7 @@ impl<'a> Parser<'a> {
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
             Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
-            Some(Token::Interp(raw)) => interpolation(raw),
+            Some(Token::Interp(raw)) => interpolation(raw, self.stack_start),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
                 Ok(Expr::Call(name, self.arguments()?))
             },
@@ -1262,9 +1274,10 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
 fn parse<'a>(
     text: &'a str,
     vars: &Variables,
+    stack_start: usize,
 ) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Failure<'a>> {
     let (tokens, spans) = tokenize(text).map_err(|(error, at)| Failure { error, at: Some(at) })?;
-    let mut parser = Parser::new(tokens, spans);
+    let mut parser = Parser::new(tokens, spans, stack_start);
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
         // variable or being assigned, is most likely mistyped.
@@ -1288,16 +1301,16 @@ pub fn evaluate<'a>(
     functions: &mut Functions,
     host: &mut dyn Host,
 ) -> Result<Option<Value>, Failure<'a>> {
-    let (mut program, declared) = parse(text, vars)?;
+    let stack_start = stack_address();
+    let (mut program, declared) = parse(text, vars, stack_start)?;
     if !declared.is_empty() {
         let text: &'static str = Box::leak(String::from(text).into_boxed_str());
-        let (forever, declared) = parse(text, vars)?;
+        let (forever, declared) = parse(text, vars, stack_start)?;
         for (name, function) in declared {
             functions.insert(String::from(name), function);
         }
         program = forever;
     }
-    let stack_start = stack_address();
     let mut env = Env { globals: vars, functions, host, locals: Vec::new(), depth: 0, stack_start };
     match run(&program, &mut env)? {
         Flow::Normal(value) | Flow::Return(value) => Ok(value),
