@@ -4,7 +4,7 @@
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
-**Today's calculator is different in one way** that changes on the way: `;` can be left off before `}` or at the end of a line. Step 6.4.4 in [ROADMAP.md](ROADMAP.md) brings it in line with this document.
+**Today's calculator is different in one way** that changes on the way: `;` can be left off before `}` or at the very end of what you type. Step 6.4.4 in [ROADMAP.md](ROADMAP.md) brings it in line with this document.
 
 **On size:** this is most of C#, plus pointers. A C# compiler is a large program, so each feature has its own roadmap step, and milestone M2 only needs the small core (§11). The costliest features are generics, `async`/`await`, `yield`, and exceptions in the x86 compiler (6.8).
 
@@ -59,6 +59,7 @@ x is 2A
 
 - **The first word decides.** If it's a registered command, the line is a command: plain words plus `-f`/`--flag` options. They're checked against the arguments the command declares, like Python's argparse, and there's no `;`. `help beep` and `beep --help` print usage text generated from those declarations (step 6.6.1). Until then, the shell's current commands keep working as they do now.
 - **Anything else is code,** and it needs its `;`. Declarations, `using`, functions and classes typed at the prompt last for the whole session. If the last statement is an expression, its value is printed.
+- **A block can span lines.** While a `{` is still open, the prompt shows `. ` and keeps reading. A new line only separates tokens, so `;` still goes between statements. To give up on a block, press Enter on a blank `. ` line: it runs what's there, which reports the missing `}`.
 - **Commands are lowercase.** You can't declare a variable or function with a command's name.
 - **Code can't use a command's output.** Code calls the matching function instead (`Timer.Uptime()`). A command and its function can share one Rust implementation.
 

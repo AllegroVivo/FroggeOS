@@ -1,4 +1,4 @@
-use ribbit::calc::{Functions, Host, Variables, evaluate};
+use ribbit::calc::{Functions, Host, Variables, evaluate, is_complete};
 
 // Stands in for the kernel: keeps what Ribbit writes, and has a clock
 // that always says 1234 ms.
@@ -521,6 +521,39 @@ fn interpolation() {
         ("$\"{name:X}\"", "Error: hex needs Int64, not String"),
         ("$\"{y}\"", "Error: 'y' is not a command or variable"),
         ("$\"abc", "Error: missing a closing \""),
+    ]);
+}
+
+#[test]
+fn multi_line() {
+    // The shell keeps reading lines while a { is still open...
+    assert!(!is_complete("Int64 Sq(Int64 n) {"));
+    assert!(!is_complete("for (Int64 i = 0; i < 3; i++) {\n    if (i == 1) {\n    }"));
+    assert!(!is_complete("{"));
+    // ...and runs them once every { has its }.
+    assert!(is_complete("Int64 Sq(Int64 n) {\n    return n * n\n}"));
+    assert!(is_complete("{ }"));
+    assert!(is_complete("6 * 7"));
+    assert!(is_complete(""));
+    // Braces inside strings don't count.
+    assert!(is_complete("\"{\""));
+    assert!(is_complete("$\"{{ and {1}\""));
+    // A mistake counts as ready, so its error shows at once.
+    assert!(is_complete("}"));
+    assert!(is_complete("\"{"));
+    assert!(is_complete("Int64 F() { ` }"));
+    // The shell joins the lines with newlines, which only separate tokens.
+    check(&[
+        ("Int64 Sq(Int64 n) {\n    return n * n\n}", ""),
+        ("Sq(7)", "49"),
+        ("for (Int64 i = 1; i <= 2; i++) {\n    Console.WriteLine($\"{i}: {Sq(i)}\");\n}", "1: 1\n2: 4\n"),
+        ("Int64 a = 1;\nInt64 b = 2;\na + b", "3"),
+        ("1 +\t2", "3"),
+        // A new line doesn't end a statement, so ; still goes between them.
+        ("Int64 c = 1\nc", "Error: expected ';'"),
+        // A blank line runs an unfinished block, which says what's missing.
+        ("if (true) {", "Error: expected '}'"),
+        ("Int64 F() {\n    return 1", "Error: expected '}'"),
     ]);
 }
 

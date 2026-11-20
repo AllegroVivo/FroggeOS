@@ -298,7 +298,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
     let mut chars = text.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
         let token = match c {
-            ' ' => continue,
+            ' ' | '\t' | '\n' => continue,
             '+' if chars.next_if(|&(_, d)| d == '+').is_some() => Token::PlusPlus,
             '-' if chars.next_if(|&(_, d)| d == '-').is_some() => Token::MinusMinus,
             '+' if chars.next_if(|&(_, d)| d == '=').is_some() => Token::Compound(Op::Add),
@@ -699,7 +699,7 @@ impl<'a> Parser<'a> {
     }
 
     // A whole line, or the inside of a block. Statements are separated by `;`.
-    // The `;` can be left out before a `}` or the end of the line, and after
+    // The `;` can be left out before a `}` or the end of the input, and after
     // an if or while, which already end with a `}`.
     fn statements(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
         let mut list = Vec::new();
@@ -1271,4 +1271,19 @@ pub fn evaluate<'a>(
         Flow::Normal(value) | Flow::Return(value) => Ok(value),
         Flow::Break | Flow::Continue => Ok(None),
     }
+}
+
+pub fn is_complete(text: &str) -> bool {
+    let Ok(tokens) = tokenize(text) else {
+        return true;
+    };
+    let open: i32 = tokens
+        .iter()
+        .map(|token| match token {
+            Token::LeftBrace => 1,
+            Token::RightBrace => -1,
+            _ => 0,
+        })
+        .sum();
+    open <= 0
 }

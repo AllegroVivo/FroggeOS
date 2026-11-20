@@ -4,7 +4,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::calc;
-
 use crate::{heap, keyboard, timer, vga};
 use crate::{print, println};
 
@@ -14,6 +13,7 @@ const MAX_LINE: usize = 78;
 pub fn run() -> ! {
     println!("FroggeOS shell. Type 'help' for a list of commands.");
 
+    let mut pending = String::new();
     let mut line = [0u8; MAX_LINE];
     let mut len = 0;
     let mut history: Vec<String> = Vec::new();
@@ -26,11 +26,22 @@ pub fn run() -> ! {
             '\n' => {
                 println!();
                 let text = core::str::from_utf8(&line[..len]).unwrap();
-                if !text.trim().is_empty() {
-                    history.push(String::from(text)); // heap copy
-                }
-                run_command(text, &history, &mut vars, &mut functions);
                 len = 0;
+                if !text.trim().is_empty() {
+                    if !pending.is_empty() {
+                        pending.push('\n');
+                    }
+                    pending.push_str(text);
+                    if !calc::is_complete(&pending) {
+                        print!(". ");
+                        continue;
+                    }
+                }
+                if !pending.is_empty() {
+                    history.push(pending.clone());
+                    run_command(&pending, &history, &mut vars, &mut functions);
+                    pending.clear();
+                }
                 print!("> ");
             }
             '\x08' => {
@@ -108,7 +119,7 @@ fn run_command(
         },
         "history" => {
             for (i, entry) in history.iter().enumerate() {
-                println!("{:>3}  {}", i + 1, entry);
+                println!("{:>3}  {}", i + 1, entry.replace('\n', "\n     "));
             }
         },
         "heap" => {
@@ -141,6 +152,7 @@ fn run_command(
             println!("Strings: \"Hi, \" + name, escapes \\n \\t \\\\ \\\" \\0, $\"x = {{x}}, hex {{x:X8}}\"");
             println!("Built-ins: Console.WriteLine(x), Write(x), Clear(); Timer.Uptime() in ms");
             println!("Functions: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
+            println!("Multi-line: an open {{ continues on '. ' lines, and a blank line runs it");
         }
         _ => match calc::evaluate(line, vars, functions, &mut Kernel) {
             Ok(Some(value)) => println!("{}", value),
