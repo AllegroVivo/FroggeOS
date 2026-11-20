@@ -193,7 +193,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.9** ☆ A disassembler for the code generator, and a debugger with breakpoints (it uses the existing `int3` handler)
 
 ### 7. Shell, user interface and apps
-- **7.1 Text shell** ✅ (help, clear, echo, uptime, history, heap, vars, calculator)
+- **7.1 Text shell** ✅ (help, clear, echo, uptime, history, heap, vars, lang, calculator)
   - 7.1.1 Line editing: move the cursor left and right, insert mid-line, Delete (needs 3.1.3)
   - 7.1.2 Up and down arrows recall history
   - 7.1.3 Tab completion
