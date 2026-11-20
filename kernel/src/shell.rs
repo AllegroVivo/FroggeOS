@@ -151,13 +151,17 @@ fn run_command(
             println!("Int64 (42, 0x2A), Boolean (true, false), String (\"hi\"), Void (functions only)");
             println!("-----------------------------------------------");
             println!("The following language keywords are available:");
-            println!("if, else, while, for, break, continue, return, var, const, true, false");
+            println!("if, else, while, do, for, break, continue, return, assert,");
+            println!("var, const, true, false");
             println!("-----------------------------------------------");
             println!("The following language features are available:");
-            println!("Variables: Int64 x = 5, var y = x + 1, const Int64 N = 3, then x = 6");
+            println!("Statements: each ends with ';', except after a block's '}}'");
+            println!("Variables: Int64 x = 5; var y = x + 1; const Int64 N = 3; then x = 6;");
+            println!("Loops: do {{ x++; }} while (x < 9); runs its body before the first check");
+            println!("Checks: assert x > 0, \"x must be positive\"; (the message is optional)");
             println!("Strings: \"Hi, \" + name, escapes \\n \\t \\\\ \\\" \\0, $\"x = {{x}}, hex {{x:X8}}\"");
             println!("Built-ins: Console.WriteLine(x), Write(x), Clear(); Timer.Uptime() in ms");
-            println!("Functions: Int64 Sq(Int64 n) {{ return n * n }}, then Sq(5)");
+            println!("Functions: Int64 Sq(Int64 n) {{ return n * n; }}, then Sq(5);");
             println!("Multi-line: an open {{ continues on '. ' lines, and a blank line runs it");
         }
         _ => match calc::evaluate(line, vars, functions, &mut Kernel) {

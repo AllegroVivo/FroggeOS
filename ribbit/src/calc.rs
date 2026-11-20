@@ -187,6 +187,7 @@ pub enum Error<'a> {
     NoReturn(&'a str),          // a function indicating a return without the `return` statement
     NoValue(&'a str),           // attempting to use the result of a void function
     TooDeep,                    // line used more than `MAX_STACK` stack frames
+    AssertFailed(Option<Value>) // an assert's provided condition evaluates to `false`.
 }
 
 // Display is used by ``println!("{}", error)``
@@ -219,6 +220,8 @@ impl fmt::Display for Error<'_> {
             Error::NoReturn(name) => write!(f, "'{}' must return a value", name),
             Error::NoValue(name) => write!(f, "'{}' is void and has no value to be used", name),
             Error::TooDeep => write!(f, "nested too deeply (over {} KB of stack)", MAX_STACK / 1024),
+            Error::AssertFailed(None) => write!(f, "assertion failed"),
+            Error::AssertFailed(Some(message)) => write!(f, "assertion failed: {}", message),
         }
     }
 }
@@ -275,6 +278,8 @@ enum Token<'a> {
     For,                // for
     Break,              // break
     Continue,           // continue
+    Do,                 // do
+    Assert,             // assert
     Compound(Op),       // +=
     PlusPlus,           // ++
     MinusMinus,         // --
@@ -430,6 +435,8 @@ fn tokenize<'a>(
                     "for" => Token::For,
                     "break" => Token::Break,
                     "continue" => Token::Continue,
+                    "do" => Token::Do,
+                    "assert" => Token::Assert,
                     name => Token::Name(name),
                 }
             }
@@ -571,7 +578,9 @@ enum Stmt<'a> {
         condition: Expr<'a>,
         step: Vec<Stmt<'a>>,
         body: Vec<Stmt<'a>>,
+        body_first: bool        // as in a `do` loop
     },
+    Assert(Expr<'a>, Option<Expr<'a>>), // condition, message
 }
 
 fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
@@ -741,9 +750,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // A whole line, or the inside of a block. Statements are separated by `;`.
-    // The `;` can be left out before a `}` or the end of the input, and after
-    // an if or while, which already end with a `}`.
+    // A whole line, or the inside of a block. Statements must end with `;` except
+    // in an `if`, `while`, or `for`, as they already end with a closing brace.
     fn statements(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
         let mut list = Vec::new();
         loop {
@@ -755,13 +763,10 @@ impl<'a> Parser<'a> {
                 },
                 _ => {
                     let stmt = self.statement()?;
-                    let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::Loop { .. });
+                    let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::Loop { body_first: false, .. });
                     list.push(stmt);
-                    let separator_next =
-                        matches!(self.peek(), None | Some(Token::Semicolon | Token::RightBrace));
-                    if !ends_with_block && !separator_next {
-                        self.missing = true;
-                        return Err(Error::Syntax("expected ';'"));
+                    if !ends_with_block {
+                        self.expect(Token::Semicolon, "expected ';'")?;
                     }
                 }
             }
@@ -792,7 +797,14 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 let condition = self.condition()?;
                 let body = self.loop_body()?;
-                Ok(Stmt::Loop { keyword: "while", init: Vec::new(), condition, step: Vec::new(), body })
+                Ok(Stmt::Loop { keyword: "while", init: Vec::new(), condition, step: Vec::new(), body, body_first: false })
+            },
+            (Some(Token::Do), _) => {
+                self.pos += 1;
+                let body = self.loop_body()?;
+                self.expect(Token::While, "expected 'while'")?;
+                let condition = self.condition()?;
+                Ok(Stmt::Loop { keyword: "do", init: Vec::new(), condition, step: Vec::new(), body, body_first: true })
             },
             (Some(Token::For), _) => {
                 self.pos += 1;
@@ -806,7 +818,7 @@ impl<'a> Parser<'a> {
                 self.expect(Token::Semicolon, "expected ';'")?;
                 let step = self.for_part(Token::RightParen, "expected ')'")?;
                 let body = self.loop_body()?;
-                Ok(Stmt::Loop { keyword: "for", init, condition, step, body })
+                Ok(Stmt::Loop { keyword: "for", init, condition, step, body, body_first: false })
             },
             (Some(Token::Return), _) => {
                 self.pos += 1;
@@ -826,6 +838,17 @@ impl<'a> Parser<'a> {
                     return Err(Error::Syntax("break and continue are only allowed within a loop body"));
                 }
                 Ok(if token == Token::Break { Stmt::Break } else { Stmt::Continue })
+            },
+            (Some(Token::Assert), _) => {
+                self.pos += 1;
+                let condition = self.expression()?;
+                let message = if self.peek() == Some(Token::Comma) {
+                    self.pos += 1;
+                    Some(self.expression()?)
+                } else {
+                    None
+                };
+                Ok(Stmt::Assert(condition, message))
             },
             (Some(Token::Void), _) => Err(Error::Syntax("cannot assign void to a variable")),
             (Some(Token::Type(_) | Token::Var | Token::Const), _) => self.declaration(),
@@ -1159,12 +1182,12 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                     flow => return Ok(flow),
                 }
             },
-            Stmt::Loop { keyword, init, condition, step, body } => {
+            Stmt::Loop { keyword, init, condition, step, body, body_first } => {
                 let start = vars.locals.len();
                 vars.depth += 1;
                 run(init, vars)?;
                 let mut rounds = 0;
-                while eval(condition, vars)?.boolean(keyword)? {
+                while (*body_first && rounds == 0) || eval(condition, vars)?.boolean(keyword)? {
                     rounds += 1;
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
@@ -1193,6 +1216,10 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
             },
             Stmt::Break => return Ok(Flow::Break),
             Stmt::Continue => return Ok(Flow::Continue),
+            Stmt::Assert(condition, message) => {
+                run_assert(condition, message, vars)?;
+                None
+            },
         }
     }
     Ok(Flow::Normal(last))
@@ -1206,6 +1233,23 @@ fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Err
     vars.depth -= 1;
     vars.locals.truncate(start);
     Ok(flow)
+}
+
+// Stops the line if an assert's condition is False.
+#[inline(never)]
+fn run_assert<'a>(
+    condition: &Expr<'a>,
+    message: &Option<Expr<'a>>,
+    vars: &mut Env<'a, '_>,
+) -> Result<(), Error<'a>> {
+    if eval(condition, vars)?.boolean("assert")? {
+        return Ok(());
+    }
+    let message = match message {
+        Some(message) => Some(eval(message, vars)?),
+        None => None
+    };
+    Err(Error::AssertFailed(message))
 }
 
 // Runs a function built-in to the language.
@@ -1281,8 +1325,8 @@ fn parse<'a>(
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
         // variable or being assigned, is most likely mistyped.
-        [Token::Name(name), second, ..]
-            if !matches!(second, Token::Equals | Token::LeftParen | Token::Dot) && !vars.contains_key(name) =>
+        [Token::Name(name), ..]
+            if !matches!(parser.tokens.get(1), Some(Token::Equals | Token::LeftParen | Token::Dot)) && !vars.contains_key(name) =>
             {
                 Failure { error: Error::UnknownName(name), at: Some(parser.spans[0].0) }
             }

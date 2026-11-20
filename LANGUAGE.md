@@ -4,8 +4,6 @@
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
-**Today's calculator is different in one way** that changes on the way: `;` can be left off before `}` or at the very end of what you type. Step 6.4.4 in [ROADMAP.md](ROADMAP.md) brings it in line with this document.
-
 **On size:** this is most of C#, plus pointers. A C# compiler is a large program, so each feature has its own roadmap step, and milestone M2 only needs the small core (§11). The costliest features are generics, `async`/`await`, `yield`, and exceptions in the x86 compiler (6.8).
 
 ---
@@ -154,7 +152,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 - **Errors:** `try { } catch (Exception e) { } finally { }` and `throw new Exception("...");`
 - **Cleanup:** `using (var f = File.Open("/a")) { }` calls `f.Dispose()` at the end of the block, even after an error.
 - **Locking:** `lock (m) { }` holds a lock for the whole block.
-- **Checks:** `assert x > 0, "x must be positive";` uses Python's form, and the message is optional.
+- **Checks:** `assert x > 0, "x must be positive";` uses Python's form, and the message is optional. A failed check stops the line with `assertion failed`, followed by its message if it has one. As in Python, the message is only worked out when the check fails.
 - **Braces:** every body needs `{ }`, unlike C#. This avoids the "dangling else" ambiguity.
 
 **The `;` rule:** every statement ends with `;`, at the prompt too. The exception is the `}` that closes a block, function, class, struct, enum, interface or namespace, which needs no `;` after it. `do { } while (c);` keeps its `;`.
