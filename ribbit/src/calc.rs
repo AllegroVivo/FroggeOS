@@ -8,6 +8,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
+use core::iter::Peekable;
+use core::str::CharIndices;
 
 // A value that the language works with.
 #[derive(Clone)]
@@ -273,6 +275,21 @@ enum Token<'a> {
     ShiftRight,         // >>
     Str(&'a str),       // "Ribbit"
     Dot,                // .
+    Interp(&'a str)     // $"x = {x}"
+}
+
+// Finds and returns the position of the " that ends a string.
+fn closing_quote<'a>(chars: &mut Peekable<CharIndices<'_>>) -> Result<usize, Error<'a>> {
+    loop {
+        match chars.next() {
+            Some((end, '"')) => return Ok(end),
+            Some((_, '\\')) => {
+                chars.next();
+            },
+            Some(_) => {},
+            None => return Err(Error::Syntax("missing a closing \""))
+        }
+    }
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -302,15 +319,12 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             ',' => Token::Comma,
             '.' => Token::Dot,
             '"' => {
-                let begin = start + 1;
-                loop {
-                    match chars.next() {
-                        Some((end, '"')) => break Token::Str(&text[begin..end]),
-                        Some((_, '\\')) => { chars.next(); }
-                        Some(_) => {},
-                        None => return Err(Error::Syntax("a string is missing a closing \"")),
-                    }
-                }
+                let end = closing_quote(&mut chars)?;
+                Token::Str(&text[start + 1..end])
+            },
+            '$' if chars.next_if(|&(_, d)| d == '"').is_some() => {
+                let end = closing_quote(&mut chars)?;
+                Token::Interp(&text[start + 2..end])
             },
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
             '|' if chars.next_if(|&(_, d)| d == '|').is_some() => Token::OrOr,
@@ -496,6 +510,7 @@ enum Expr<'a> {
     Or(Box<Expr<'a>>, Box<Expr<'a>>),
     Call(&'a str, Vec<Expr<'a>>),
     BuiltIn(BuiltIn, Vec<Expr<'a>>),
+    Hex(Box<Expr<'a>>, bool, u8),
 }
 
 #[derive(Copy, Clone)]
@@ -548,25 +563,102 @@ fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
     Stmt::Assign(name, Expr::Binary(op, Box::new(Expr::Variable(name)), Box::new(value)))
 }
 
+// A table outlining the valid string-escape patterns.
+fn escaped<'a>(c: Option<char>) -> Result<char, Error<'a>> {
+    match c {
+        Some('n') => Ok('\n'),
+        Some('t') => Ok('\t'),
+        Some('\\') => Ok('\\'),
+        Some('"') => Ok('"'),
+        Some('0') => Ok('\0'),
+        _ => Err(Error::Syntax("unknown escape sequence")),
+    }
+}
+
 // The text a string literal stands for. (e.g. '\n' -> 'new line')
 fn unescape<'a>(raw: &str) -> Result<Rc<String>, Error<'a>> {
     let mut text = String::new();
     let mut chars = raw.chars();
     while let Some(c) = chars.next() {
-        if c != '\\' {
-            text.push(c);
-            continue;
-        }
-        text.push(match chars.next() {
-            Some('n') => '\n',
-            Some('t') => '\t',
-            Some('\\') => '\\',
-            Some('"') => '"',
-            Some('0') => '\0',
-            _ => return Err(Error::Syntax("unknown escape sequence")),
-        });
+        text.push(if c == '\\' { escaped(chars.next())? } else { c });
     }
     Ok(Rc::new(text))
+}
+
+// Interpolation shorthand helper
+fn join<'a>(a: Expr<'a>, b: Expr<'a>) -> Expr<'a> {
+    Expr::Binary(Op::Add, Box::new(a), Box::new(b))
+}
+
+// Functionally breaks string interpolations ($"x = {x}!") into their components.
+#[allow(clippy::needless_lifetimes)]
+fn interpolation<'a>(raw: &'a str) -> Result<Expr<'a>, Error<'a>> {
+    let mut joined = Expr::Literal(Value::String(Rc::new(String::new())));
+    let mut text = String::new();
+    let mut chars = raw.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        match c {
+            '{' if chars.next_if(|&(_, d)| d == '{').is_some() => text.push('{'),
+            '}' if chars.next_if(|&(_, d)| d == '}').is_some() => text.push('}'),
+            '{' => {
+                let end = loop {
+                    match chars.next() {
+                        Some((end, '}')) => break end,
+                        Some(_) => {},
+                        None => return Err(Error::Syntax("missing closing '}' for string interpolation. escape brackets with '{{'"))
+                    }
+                };
+                if !text.is_empty() {
+                    let piece = core::mem::take(&mut text);
+                    joined = join(joined, Expr::Literal(Value::String(Rc::new(piece))));
+                }
+                joined = join(joined, hole(&raw[start + 1..end])?);
+            },
+            '}' => return Err(Error::Syntax("missing opening '{' for string interpolation. escape brackets with '}}'")),
+            '\\' => text.push(escaped(chars.next().map(|(_, d)| d))?),
+            c => text.push(c),
+        }
+    }
+    if !text.is_empty() {
+        joined = join(joined, Expr::Literal(Value::String(Rc::new(text))));
+    }
+    Ok(joined)
+}
+
+// A single interpolate {hole} in a string.
+#[allow(clippy::needless_lifetimes)]
+fn hole<'a>(inside: &'a str) -> Result<Expr<'a>, Error<'a>> {
+    let (code, format) = match inside.split_once(':') {
+        Some((code, format)) => (code, Some(format)),
+        None => (inside, None),
+    };
+    let mut parser = Parser::new(tokenize(code)?);
+    let value = parser.expression()?;
+    if parser.pos < parser.tokens.len() {
+        return Err(Error::Syntax("an interpolate {hole} may only hold one expression"));
+    }
+    let Some(format) = format else {
+        return Ok(value);
+    };
+    let bad = Error::Syntax("an interpolation format must be in the style of {n:x8}");
+    let upper = match format.chars().next() {
+        Some('X') => true,
+        Some('x') => false,
+        _ => return Err(bad),
+    };
+    let width = match &format[1..] {
+        "" => 0,
+        digits => digits.parse::<u8>().map_err(|_| bad)?,
+    };
+    Ok(Expr::Hex(Box::new(value), upper, width))
+}
+
+// Number `n` in hex, displayed in `width` digits.
+#[inline(never)]
+fn hex(n: i64, upper: bool, width: u8) -> Value {
+    let w = width as usize;
+    let text = if upper { format!("{:0w$X}", n, w = w) } else { format!("{:0w$x}", n, w = w) };
+    Value::String(Rc::new(text))
 }
 
 struct Parser<'a> {
@@ -579,6 +671,11 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+
+    fn new(tokens: Vec<Token<'a>>) -> Parser<'a> {
+        Parser { tokens, pos: 0, depth: 0, in_function: false, loops: 0, functions: Vec::new() }
+    }
+
     fn peek(&self) -> Option<Token<'a>> {
         self.tokens.get(self.pos).copied()
     }
@@ -845,6 +942,7 @@ impl<'a> Parser<'a> {
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
             Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
+            Some(Token::Interp(raw)) => interpolation(raw),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
                 Ok(Expr::Call(name, self.arguments()?))
             },
@@ -964,6 +1062,7 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
         Expr::BuiltIn(builtin, args) => {
             call_builtin(*builtin, args, vars)?.ok_or(Error::NoValue(builtin.name()))
         },
+        Expr::Hex(inner, upper, width) => Ok(hex(eval(inner, vars)?.int64("hex")?, *upper, *width)),
     }
 }
 
@@ -1133,7 +1232,7 @@ fn parse<'a>(
     vars: &Variables,
 ) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Error<'a>> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, pos: 0, depth: 0, in_function: false, loops:0, functions: Vec::new() };
+    let mut parser = Parser::new(tokens);
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
         // variable or being assigned, is most likely mistyped.

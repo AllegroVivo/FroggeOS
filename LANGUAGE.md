@@ -133,7 +133,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 - **Numbers:** `42`, `0x2A` and `3.14`
 - **Characters:** `'A'`, `'\n'`, `'\x41'`
 - **Strings:** `"..."`, with the escapes `\n \t \\ \" \0 \xNN`
-- **Interpolated strings:** `$"x = {x}, hex {x:X8}"`. Each `{...}` is ordinary code and is checked like any other expression.
+- **Interpolated strings:** `$"x = {x}, hex {x:X8}"`. Each `{...}` is ordinary code and is checked like any other expression. As in C#, `{{` and `}}` stand for `{` and `}`. After a `:`, `X` or `x` prints hex in upper or lower case, padded with zeros to the width that follows: `{255:X4}` is `00FF`. For now, unlike C#, a `{...}` can't hold a `"`.
 - **Comments:** `//` to the end of the line, and `/* ... */`
 - **Whitespace:** spaces, tabs and newlines only separate tokens.
 

@@ -450,7 +450,7 @@ fn strings() {
         ("String Twice(String t) { return t + t }", ""),
         ("Twice(\"ab\")", "abab"),
         // Errors.
-        ("\"abc", "Error: a string is missing a closing \""),
+        ("\"abc", "Error: missing a closing \""),
         ("\"a\\qb\"", "Error: unknown escape sequence"),
         ("String t", "Error: a String must be assigned a value"),
         ("Greeting += \"!\"", "Error: 'Greeting' is a constant"),
@@ -488,6 +488,39 @@ fn console() {
         ("Console.WriteLine(1 / 0)", "Error: division by zero"),
         // As with a Void function of your own, it runs before the error.
         ("Int64 n = Console.WriteLine(1)", "1\nError: 'Console.WriteLine' is void and has no value to be used"),
+    ]);
+}
+
+#[test]
+fn interpolation() {
+    check(&[
+        ("Int64 x = 42", "42"),
+        ("$\"x = {x}\"", "x = 42"),
+        // Always a String, even with nothing but a hole...
+        ("$\"{x}\"", "42"),
+        ("$\"{x}\" + 1", "421"),
+        // ...and each hole is a whole expression.
+        ("$\"{x / 2 + 1} and {x == 42}\"", "22 and True"),
+        ("String name = \"Ribbit\"; $\"Hi, {name}!\"", "Hi, Ribbit!"),
+        // Hex: X or x, and a width.
+        ("$\"hex {x:X}, {255:x}, {x:X8}\"", "hex 2A, ff, 0000002A"),
+        ("$\"{-1:X}\"", "FFFFFFFFFFFFFFFF"),
+        // {{ and }} are braces, and the usual escapes work.
+        ("$\"{{x}} is {x}\"", "{x} is 42"),
+        ("$\"tab\\t{x}\"", "tab\t42"),
+        ("$\"\"", ""),
+        ("for (Int64 i = 1; i <= 2; i++) { Console.WriteLine($\"i = {i}\") }", "i = 1\ni = 2\n"),
+        ("String Show(Int64 n) { return $\"<{n}>\" }; Show(7)", "<7>"),
+        // Errors.
+        ("$\"{x\"", "Error: missing closing '}' for string interpolation. escape brackets with '{{'"),
+        ("$\"x}\"", "Error: missing opening '{' for string interpolation. escape brackets with '}}'"),
+        ("$\"{x y}\"", "Error: an interpolate {hole} may only hold one expression"),
+        ("$\"{}\"", "Error: unexpected end of input"),
+        ("$\"{x:D}\"", "Error: an interpolation format must be in the style of {n:x8}"),
+        ("$\"{x:X999}\"", "Error: an interpolation format must be in the style of {n:x8}"),
+        ("$\"{name:X}\"", "Error: hex needs Int64, not String"),
+        ("$\"{y}\"", "Error: 'y' is not a command or variable"),
+        ("$\"abc", "Error: missing a closing \""),
     ]);
 }
 
