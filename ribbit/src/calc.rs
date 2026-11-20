@@ -223,6 +223,17 @@ impl fmt::Display for Error<'_> {
     }
 }
 
+pub struct Failure<'a> {
+    pub error: Error<'a>,
+    pub at: Option<usize>,
+}
+
+impl<'a> From<Error<'a>> for Failure<'a> {
+    fn from(error: Error<'a>) -> Self {
+        Failure { error, at: None }
+    }
+}
+
 // ``derive`` instructs the compiler to write these traits automatically.
 // ``Copy`` allows a token to be copied in the same manner as an integer.
 // ``PartialEq`` allows for comparison with ``==``.
@@ -293,8 +304,11 @@ fn closing_quote<'a>(chars: &mut Peekable<CharIndices<'_>>) -> Result<usize, Err
 }
 
 #[allow(clippy::needless_lifetimes)]
-fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
+fn tokenize<'a>(
+    text: &'a str,
+) -> Result<(Vec<Token<'a>>, Vec<(usize, usize)>), (Error<'a>, usize)> {
     let mut tokens = Vec::new();
+    let mut spans = Vec::new();
     let mut chars = text.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
         let token = match c {
@@ -319,11 +333,11 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
             ',' => Token::Comma,
             '.' => Token::Dot,
             '"' => {
-                let end = closing_quote(&mut chars)?;
+                let end = closing_quote(&mut chars).map_err(|error| (error, start))?;
                 Token::Str(&text[start + 1..end])
             },
             '$' if chars.next_if(|&(_, d)| d == '"').is_some() => {
-                let end = closing_quote(&mut chars)?;
+                let end = closing_quote(&mut chars).map_err(|error| (error, start))?;
                 Token::Interp(&text[start + 2..end])
             },
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
@@ -342,7 +356,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     ('<', true) => Token::Compound(Op::ShiftLeft),
                     ('>', false) => Token::ShiftRight,
                     ('>', true) => Token::Compound(Op::ShiftRight),
-                    _ => return Err(Error::BadChar(c)),
+                    _ => return Err((Error::BadChar(c), start)),
                 }
             },
             '=' | '!' | '<' | '>' => {
@@ -357,7 +371,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     ('<', true) => Token::LessEqual,
                     ('>', false) => Token::Greater,
                     ('>', true) => Token::GreaterEqual,
-                    _ => return Err(Error::BadChar(c)),
+                    _ => return Err((Error::BadChar(c), start)),
                 }
             },
             '0' if chars.next_if(|&(_, d)| d == 'x' || d == 'X').is_some() => {
@@ -369,10 +383,10 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     value = value
                         .checked_mul(16)
                         .and_then(|v| v.checked_add(digit as i64))
-                        .ok_or(Error::Overflow)?;
+                        .ok_or((Error::Overflow, start))?;
                 }
                 if digits == 0 {
-                    return Err(Error::Syntax("expected hex digits after '0x'"));
+                    return Err((Error::Syntax("expected hex digits after '0x'"), start));
                 }
                 Token::Number(value)
             },
@@ -387,7 +401,7 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     value = value
                         .checked_mul(10)
                         .and_then(|v| v.checked_add(digit))
-                        .ok_or(Error::Overflow)?;
+                        .ok_or((Error::Overflow, start))?;
                 }
                 Token::Number(value)
             }
@@ -419,11 +433,12 @@ fn tokenize<'a>(text: &'a str) -> Result<Vec<Token<'a>>, Error<'a>> {
                     name => Token::Name(name),
                 }
             }
-            other => return Err(Error::BadChar(other))
+            other => return Err((Error::BadChar(other), start))
         };
         tokens.push(token);
+        spans.push((start, chars.peek().map_or(text.len(), |&(end, _)| end)));
     }
-    Ok(tokens)
+    Ok((tokens, spans))
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -632,7 +647,8 @@ fn hole<'a>(inside: &'a str) -> Result<Expr<'a>, Error<'a>> {
         Some((code, format)) => (code, Some(format)),
         None => (inside, None),
     };
-    let mut parser = Parser::new(tokenize(code)?);
+    let (tokens, spans) = tokenize(code).map_err(|(error, _)| error)?;
+    let mut parser = Parser::new(tokens, spans);
     let value = parser.expression()?;
     if parser.pos < parser.tokens.len() {
         return Err(Error::Syntax("an interpolate {hole} may only hold one expression"));
@@ -663,7 +679,10 @@ fn hex(n: i64, upper: bool, width: u8) -> Value {
 
 struct Parser<'a> {
     tokens: Vec<Token<'a>>,
+    spans: Vec<(usize, usize)>,
     pos: usize,
+    looked: usize,
+    missing: bool,
     depth: usize,
     in_function: bool,
     loops: usize,
@@ -672,11 +691,15 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
 
-    fn new(tokens: Vec<Token<'a>>) -> Parser<'a> {
-        Parser { tokens, pos: 0, depth: 0, in_function: false, loops: 0, functions: Vec::new() }
+    fn new(tokens: Vec<Token<'a>>, spans: Vec<(usize, usize)>) -> Parser<'a> {
+        Parser {
+            tokens, spans, pos: 0, looked: 0, missing: false,
+            depth: 0, in_function: false, loops: 0, functions: Vec::new()
+        }
     }
 
-    fn peek(&self) -> Option<Token<'a>> {
+    fn peek(&mut self) -> Option<Token<'a>> {
+        self.looked = self.pos;
         self.tokens.get(self.pos).copied()
     }
 
@@ -693,9 +716,19 @@ impl<'a> Parser<'a> {
     // Take the next token if ``expected``, else fail with ``message``.
     fn expect(&mut self, expected: Token<'a>, message: &'static str) -> Result<(), Error<'a>> {
         if self.next() != Some(expected) {
+            self.missing = true;
             return Err(Error::Syntax(message));
         }
         Ok(())
+    }
+
+    fn position(&self) -> usize {
+        let looked = self.looked.min(self.spans.len());
+        let after_previous = if looked > 0 { self.spans[looked - 1].1 } else { 0 };
+        match self.spans.get(looked) {
+            Some(&(start, _)) if !self.missing => start,
+            _ => after_previous,
+        }
     }
 
     // A whole line, or the inside of a block. Statements are separated by `;`.
@@ -717,6 +750,7 @@ impl<'a> Parser<'a> {
                     let separator_next =
                         matches!(self.peek(), None | Some(Token::Semicolon | Token::RightBrace));
                     if !ends_with_block && !separator_next {
+                        self.missing = true;
                         return Err(Error::Syntax("expected ';'"));
                     }
                 }
@@ -962,9 +996,7 @@ impl<'a> Parser<'a> {
             Some(Token::Name(name)) => Ok(Expr::Variable(name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
-                if self.next() != Some(Token::RightParen) {
-                    return Err(Error::Syntax("expected ')'"));
-                }
+                self.expect(Token::RightParen, "expected ')'")?;
                 Ok(inside)
             }
             Some(Token::PlusPlus | Token::MinusMinus) => {
@@ -1230,22 +1262,22 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
 fn parse<'a>(
     text: &'a str,
     vars: &Variables,
-) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Error<'a>> {
-    let tokens = tokenize(text)?;
-    let mut parser = Parser::new(tokens);
+) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Failure<'a>> {
+    let (tokens, spans) = tokenize(text).map_err(|(error, at)| Failure { error, at: Some(at) })?;
+    let mut parser = Parser::new(tokens, spans);
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
         // A line that doesn't parse, and starts with a name that isn't a
         // variable or being assigned, is most likely mistyped.
         [Token::Name(name), second, ..]
             if !matches!(second, Token::Equals | Token::LeftParen | Token::Dot) && !vars.contains_key(name) =>
             {
-                Error::UnknownName(name)
+                Failure { error: Error::UnknownName(name), at: Some(parser.spans[0].0) }
             }
-        _ => error,
+        _ => Failure { error, at: Some(parser.position()) },
     })?;
     if parser.pos < parser.tokens.len() {
-        return Err(Error::Syntax("unexpected '}'"));
-    }
+        return Err(Failure { error: Error::Syntax("unexpected '}'"), at: Some(parser.position()) });
+    };
     Ok((program, parser.functions))
 }
 
@@ -1255,7 +1287,7 @@ pub fn evaluate<'a>(
     vars: &mut Variables,
     functions: &mut Functions,
     host: &mut dyn Host,
-) -> Result<Option<Value>, Error<'a>> {
+) -> Result<Option<Value>, Failure<'a>> {
     let (mut program, declared) = parse(text, vars)?;
     if !declared.is_empty() {
         let text: &'static str = Box::leak(String::from(text).into_boxed_str());
@@ -1274,7 +1306,7 @@ pub fn evaluate<'a>(
 }
 
 pub fn is_complete(text: &str) -> bool {
-    let Ok(tokens) = tokenize(text) else {
+    let Ok((tokens, _)) = tokenize(text) else {
         return true;
     };
     let open: i32 = tokens

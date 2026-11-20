@@ -31,7 +31,7 @@ fn check(session: &[(&str, &str)]) {
         let printed = match evaluate(line, &mut vars, &mut functions, &mut host) {
             Ok(Some(value)) => value.to_string(),
             Ok(None) => String::new(),
-            Err(error) => format!("Error: {}", error),
+            Err(failure) => format!("Error: {}", failure.error),
         };
         assert_eq!(host.output + &printed, expected, "after typing: {}", line);
     }
@@ -642,4 +642,44 @@ fn function_errors() {
         ("Int64 Peek() { return hidden }", ""),
         ("if (true) { Int64 hidden = 1; Peek() }", "Error: 'hidden' is not a command or variable"),
     ]);
+}
+
+// The text before the spot that its mistake points to. None means the
+// mistake has no place, because it only showed up while running.
+fn before_mistake(text: &str) -> Option<&str> {
+    let mut host = TestHost { output: String::new() };
+    let failure = evaluate(text, &mut Variables::new(), &mut Functions::new(), &mut host).err()?;
+    failure.at.map(|at| &text[..at])
+}
+
+#[test]
+fn error_positions() {
+    // A missing token is pointed at just after the token before it,
+    // where it belongs...
+    assert_eq!(before_mistake("6 * (7 + 1"), Some("6 * (7 + 1"));
+    assert_eq!(before_mistake("Sq(7 8)"), Some("Sq(7"));
+    assert_eq!(before_mistake("if x > 1 { }"), Some("if"));
+    assert_eq!(before_mistake("Int64 a = 1 a"), Some("Int64 a = 1"));
+    assert_eq!(before_mistake("if (true) {"), Some("if (true) {"));
+    assert_eq!(
+        before_mistake("if (true) {\n    Int64 a = 1\n    a\n}"),
+        Some("if (true) {\n    Int64 a = 1")
+    );
+    // ...and any other mistake at the token that's wrong.
+    assert_eq!(before_mistake("1 + )"), Some("1 + "));
+    assert_eq!(before_mistake("6 * 7 }"), Some("6 * 7 "));
+    assert_eq!(before_mistake("1 + x++"), Some("1 + x"));
+    assert_eq!(before_mistake("Console.Writeline(1)"), Some("Console."));
+    assert_eq!(before_mistake("if (true) {\n    return 1\n}"), Some("if (true) {\n    "));
+    assert_eq!(before_mistake("ech hello"), Some(""));
+    // A mistake inside a token points at the token's start...
+    assert_eq!(before_mistake("3 $ 4"), Some("3 "));
+    assert_eq!(before_mistake("x = \"abc"), Some("x = "));
+    assert_eq!(before_mistake("x = 0xZ"), Some("x = "));
+    assert_eq!(before_mistake("x = \"\\q\""), Some("x = "));
+    // ...which for $"..." is the start of the whole string.
+    assert_eq!(before_mistake("x = $\"{1 +}\""), Some("x = "));
+    // Mistakes found while running have no place.
+    assert_eq!(before_mistake("1 / 0"), None);
+    assert_eq!(before_mistake("y = 5"), None);
 }

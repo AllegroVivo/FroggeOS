@@ -24,8 +24,14 @@ pub fn run() -> ! {
     loop {
         match wait_for_char() {
             '\n' => {
-                println!();
                 let text = core::str::from_utf8(&line[..len]).unwrap();
+                if text.trim().is_empty() && !pending.is_empty() {
+                    for _ in 0..len + 2 {
+                        print!("\x08");
+                    }
+                } else {
+                    println!();
+                }
                 len = 0;
                 if !text.trim().is_empty() {
                     if !pending.is_empty() {
@@ -157,7 +163,26 @@ fn run_command(
         _ => match calc::evaluate(line, vars, functions, &mut Kernel) {
             Ok(Some(value)) => println!("{}", value),
             Ok(None) => {} // line ended with an `if` or `while`.
-            Err(error) => println!("Error: {}", error),
+            Err(failure) => match failure.at {
+                Some(at) => mark(line, at, &failure.error),
+                None => println!("Error: {}", failure.error),
+            },
         },
+    }
+}
+
+// Displays a mistake found during preprocessing.
+fn mark(code: &str, at: usize, error: &calc::Error) {
+    let start = code [..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = code[at..].find('\n').map_or(code.len(), |i| at + i);
+    let width = (at - start + 3).min(MAX_LINE + 2);
+    if end == code.len() {
+        println!("{:>width$}", "^");
+        println!("Error: {}", error);
+    } else {
+        println!("  {}", &code[start..end]);
+        println!("{:>width$}", "^");
+        let number = code[..start].matches('\n').count() + 1;
+        println!("Error on line {}: {}", number, error);
     }
 }
