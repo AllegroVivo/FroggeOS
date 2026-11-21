@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::calc;
-use crate::{heap, keyboard, rtc, timer, vga};
+use crate::{heap, keyboard, rtc, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -188,6 +188,7 @@ fn run_command(
             println!("echo <text>  print <text>");
             println!("uptime       time since the timer started");
             println!("date         show the date and time");
+            println!("beep         play a tone: beep [hz] [ms], 440 Hz for 200 ms by default");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("vars         list the stored variables");
@@ -208,6 +209,14 @@ fn run_command(
                 "{}-{:02}-{:02} {:02}:{:02}:{:02}",
                 now.year, now.month, now.day, now.hour, now.minute, now.second
             );
+        },
+        "beep" => {
+            let hz = words.next().map_or(Some(440), |word| word.parse().ok());
+            let ms = words.next().map_or(Some(200), |word| word.parse().ok());
+            match (hz, ms) {
+                (Some(hz @ 20..=20_000), Some(ms @ 0..=10_000)) => speaker::beep(hz, ms),
+                _ => println!("beep values must be between 20-20,000 hz and ms: 0-10,000 ms"),
+            }
         },
         "history" => {
             for (i, entry) in history.iter().enumerate() {

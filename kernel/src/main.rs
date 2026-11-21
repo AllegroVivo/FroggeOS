@@ -13,6 +13,7 @@ mod pic;
 mod port;
 mod rtc;
 mod shell;
+mod speaker;
 mod timer;
 mod vga;
 

@@ -1,11 +1,12 @@
 // Programmable Interval Timer (PIT)
 
+use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::port::outb;
 
 pub const HZ: u64 = 100;
-const PIT_CLOCK: u64 = 1_193_182;
+pub const PIT_CLOCK: u64 = 1_193_182;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
@@ -26,4 +27,12 @@ pub fn tick() {
 
 pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
+}
+
+// Waits approximately `ms` milliseconds to the nearest timer tick.
+pub fn sleep(ms: u64) {
+    let end = ticks() + (ms * HZ).div_ceil(1000);
+    while ticks() < end {
+        unsafe { asm!("hlt") };
+    }
 }
