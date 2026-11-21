@@ -11,6 +11,7 @@ mod lock;
 mod paging;
 mod pic;
 mod port;
+mod rtc;
 mod shell;
 mod timer;
 mod vga;

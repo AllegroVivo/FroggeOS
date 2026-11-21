@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-21):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC and a 100 Hz timer, a PS/2 keyboard with arrow keys, a free-list heap, and a shell whose arrow keys edit the line and recall earlier ones. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 122 KB of its 256 KB budget.
+**Status (2026-11-21):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer and the CMOS clock, a PS/2 keyboard with arrow keys, a free-list heap, and a shell whose arrow keys edit the line and recall earlier ones. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M2's demo works: a recursive `Fib()` typed at the prompt. The kernel is 123 KB of its 256 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -69,7 +69,7 @@
 - **2.5 Time**
   - 2.5.1 PIT at 100 Hz, a tick counter, `uptime` ✅
   - 2.5.2 `sleep(ms)`: wait with `hlt` for now; it becomes a real sleep once tasks exist (2.6.5)
-  - 2.5.3 Read the date and time from the CMOS real-time clock, and add a `date` command
+  - 2.5.3 Read the date and time from the CMOS real-time clock, and add a `date` command ✅
   - 2.5.4 ☆ Calibrate the TSC against the PIT for fine-grained timing (profiling, frame rates)
   - 2.5.5 A Local APIC timer on each core (comes with 2.7)
 - **2.6 Tasks (multitasking)**
@@ -193,7 +193,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.9** ☆ A disassembler for the code generator, and a debugger with breakpoints (it uses the existing `int3` handler)
 
 ### 7. Shell, user interface and apps
-- **7.1 Text shell** ✅ (help, clear, echo, uptime, history, heap, vars, lang, calculator)
+- **7.1 Text shell** ✅ (help, clear, echo, uptime, date, history, heap, vars, lang, calculator)
   - 7.1.1 Line editing: move the cursor left and right, insert mid-line, Delete (needs 3.1.3) ✅
   - 7.1.2 Up and down arrows recall history ✅
   - 7.1.3 Tab completion

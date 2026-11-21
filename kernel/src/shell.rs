@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::calc;
-use crate::{heap, keyboard, timer, vga};
+use crate::{heap, keyboard, rtc, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -187,6 +187,7 @@ fn run_command(
             println!("clear        clear the screen");
             println!("echo <text>  print <text>");
             println!("uptime       time since the timer started");
+            println!("date         show the date and time");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("vars         list the stored variables");
@@ -200,6 +201,13 @@ fn run_command(
         "uptime" => {
             let ticks = timer::ticks();
             println!("{}.{:02} seconds", ticks / timer::HZ, ticks % timer::HZ);
+        },
+        "date" => {
+            let now = rtc::now();
+            println!(
+                "{}-{:02}-{:02} {:02}:{:02}:{:02}",
+                now.year, now.month, now.day, now.hour, now.minute, now.second
+            );
         },
         "history" => {
             for (i, entry) in history.iter().enumerate() {

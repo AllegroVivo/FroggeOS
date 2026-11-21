@@ -30,4 +30,4 @@ $image = New-Object byte[] 1474560
 [Array]::Copy($kernel, 0, $image, 5 * 512,  $kernel.Length) # sectors 5+
 [System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $image)
 
-qemu-system-x86_64 -drive file=disk.img,format=raw,if=floppy
+qemu-system-x86_64 -drive file=disk.img,format=raw,if=floppy -rtc base=localtime
