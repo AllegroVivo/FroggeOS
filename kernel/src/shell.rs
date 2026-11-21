@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::calc;
 use crate::{heap, keyboard, timer, vga};
+use crate::keyboard::Key;
 use crate::{print, println};
 
 // ``> `` + 78 characters fills an 80-character row.
@@ -17,13 +18,15 @@ pub fn run() -> ! {
     let mut line = [0u8; MAX_LINE];
     let mut len = 0;
     let mut history: Vec<String> = Vec::new();
+    let mut back = 0;
+    let mut draft = String::new();
     let mut vars = calc::Variables::new();
     let mut functions = calc::Functions::new();
     print!("> ");
 
     loop {
-        match wait_for_char() {
-            '\n' => {
+        match wait_for_key() {
+            Key::Char('\n') => {
                 let text = core::str::from_utf8(&line[..len]).unwrap();
                 if text.trim().is_empty() && !pending.is_empty() {
                     for _ in 0..len + 2 {
@@ -33,6 +36,7 @@ pub fn run() -> ! {
                     println!();
                 }
                 len = 0;
+                back = 0;
                 if !text.trim().is_empty() {
                     if !pending.is_empty() {
                         pending.push('\n');
@@ -49,31 +53,59 @@ pub fn run() -> ! {
                     pending.clear();
                 }
                 print!("> ");
-            }
-            '\x08' => {
+            },
+            Key::Char('\x08') => {
                 if len > 0 {
                     len -= 1;
                     print!("\x08");
                 }
-            }
-            c => {
+            },
+            Key::Char(c) => {
                 if len < MAX_LINE {
                     line[len] = c as u8;
                     len += 1;
                     print!("{}", c);
                 }
+            },
+            Key::Up => {
+                if let Some(entry) = recall(&history, back + 1) {
+                    if back == 0 {
+                        draft = String::from(core::str::from_utf8(&line[..len]).unwrap());
+                    }
+                    back += 1;
+                    len = replace_line(&mut line, len, entry);
+                }
             }
+            Key::Down if back > 0 => {
+                back -= 1;
+                let text = if back == 0 { &draft } else { recall(&history, back).unwrap() };
+                len = replace_line(&mut line, len, text);
+            },
+            _ => {}
         }
     }
 }
 
-fn wait_for_char() -> char {
+fn wait_for_key() -> Key {
     loop {
-        if let Some(c) = keyboard::read_char() {
-            return c;
+        if let Some(key) = keyboard::read_key() {
+            return key;
         }
         unsafe { asm!("hlt") };
     }
+}
+
+fn recall(history: &[String], back: usize) -> Option<&String> {
+    history.iter().rev().filter(|entry| !entry.contains('\n')).nth(back - 1)
+}
+
+fn replace_line(line: &mut [u8], len: usize, text: &str) -> usize {
+    for _ in 0..len {
+        print!("\x08");
+    }
+    line[..text.len()].copy_from_slice(text.as_bytes());
+    print!("{}", text);
+    text.len()
 }
 
 struct Kernel;

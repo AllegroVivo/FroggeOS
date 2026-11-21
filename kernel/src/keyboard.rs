@@ -49,24 +49,46 @@ pub fn handle_interrupt() {
     QUEUE.lock().push(scancode);
 }
 
-// Read in the next typed character, or None.
-pub fn read_char() -> Option<char> {
+// A key press.
+pub enum Key {
+    Char(char),
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    Delete,
+    PageUp,
+    PageDown,
+}
+
+// Read in the next key press, or None.
+pub fn read_key() -> Option<Key> {
     loop {
         let scancode = QUEUE.lock().pop()?;
-        if let Some(c) = translate(scancode) {
-            return Some(c);
+        if let Some(key) = translate(scancode) {
+            return Some(key);
         }
-        // Wasn't a character, try next.
     }
 }
 
 static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
+static EXTENDED: AtomicBool = AtomicBool::new(false);
 
 // US layout.
 const NORMAL: &[u8; 58] = b"\0\01234567890-=\x08\0qwertyuiop[]\n\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
 const SHIFTED: &[u8; 58] = b"\0\0!@#$%^&*()_+\x08\0QWERTYUIOP{}\n\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
 
-fn translate(scancode: u8) -> Option<char> {
+fn translate(scancode: u8) -> Option<Key> {
+    // Keys added after the first PC keyboard (i.e. arrows) send `0xE0` first.
+    if scancode == 0xE0 {
+        EXTENDED.store(true, Ordering::Relaxed);
+        return None;
+    }
+    if EXTENDED.swap(false, Ordering::Relaxed) {
+        return extended(scancode);
+    }
     match scancode {
         0x2A | 0x36 => {
             SHIFT_DOWN.store(true, Ordering::Relaxed);  // left/right Shift pressed
@@ -80,9 +102,27 @@ fn translate(scancode: u8) -> Option<char> {
             let table = if SHIFT_DOWN.load(Ordering::Relaxed) { SHIFTED } else { NORMAL };
             match table[scancode as usize] {
                 0 => None, // key has no character (Ctrl/Alt, etc...)
-                byte => Some(byte as char),
+                byte => Some(Key::Char(byte as char)),
             }
         }
         _ => None,
     }
+}
+
+// Keys whose scancodes come after a code `0xE0`.
+fn extended(scancode: u8) -> Option<Key> {
+    Some(match scancode {
+        0x1C => Key::Char('\n'),        // keypad 'Enter'
+        0x35 => Key::Char('/'),         // keypad '/'
+        0x47 => Key::Home,
+        0x48 => Key::Up,
+        0x49 => Key::PageUp,
+        0x4B => Key::Left,
+        0x4D => Key::Right,
+        0x4F => Key::End,
+        0x50 => Key::Down,
+        0x51 => Key::PageDown,
+        0x53 => Key::Delete,
+        _ => return None,
+    })
 }
