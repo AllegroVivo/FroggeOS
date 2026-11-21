@@ -17,6 +17,7 @@ pub fn run() -> ! {
     let mut pending = String::new();
     let mut line = [0u8; MAX_LINE];
     let mut len = 0;
+    let mut pos = 0;
     let mut history: Vec<String> = Vec::new();
     let mut back = 0;
     let mut draft = String::new();
@@ -36,6 +37,7 @@ pub fn run() -> ! {
                     println!();
                 }
                 len = 0;
+                pos = 0;
                 back = 0;
                 if !text.trim().is_empty() {
                     if !pending.is_empty() {
@@ -55,17 +57,50 @@ pub fn run() -> ! {
                 print!("> ");
             },
             Key::Char('\x08') => {
-                if len > 0 {
+                if pos > 0 {
+                    line.copy_within(pos..len, pos - 1);
+                    pos -= 1;
                     len -= 1;
-                    print!("\x08");
+                    vga::cursor_left(1);
+                    redraw(&line[pos..len], 1);
                 }
             },
             Key::Char(c) => {
                 if len < MAX_LINE {
-                    line[len] = c as u8;
+                    line.copy_within(pos..len, pos + 1);
+                    line[pos] = c as u8;
                     len += 1;
+                    pos += 1;
                     print!("{}", c);
+                    redraw(&line[pos..len], 0);
                 }
+            },
+            Key::Delete => {
+                if pos < len {
+                    line.copy_within(pos + 1..len, pos);
+                    len -= 1;
+                    redraw(&line[pos..len], 1);
+                }
+            },
+            Key::Left => {
+                if pos > 0 {
+                    pos -= 1;
+                    vga::cursor_left(1);
+                }
+            },
+            Key::Right => {
+                if pos < len {
+                    print!("{}", line[pos] as char);
+                    pos += 1;
+                }
+            },
+            Key::Home => {
+                vga::cursor_left(pos);
+                pos = 0;
+            },
+            Key::End => {
+                print!("{}", core::str::from_utf8(&line[pos..len]).unwrap());
+                pos = len;
             },
             Key::Up => {
                 if let Some(entry) = recall(&history, back + 1) {
@@ -73,13 +108,15 @@ pub fn run() -> ! {
                         draft = String::from(core::str::from_utf8(&line[..len]).unwrap());
                     }
                     back += 1;
-                    len = replace_line(&mut line, len, entry);
+                    len = replace_line(&mut line, pos, len, entry);
+                    pos = len;
                 }
             }
             Key::Down if back > 0 => {
                 back -= 1;
                 let text = if back == 0 { &draft } else { recall(&history, back).unwrap() };
-                len = replace_line(&mut line, len, text);
+                len = replace_line(&mut line, pos, len, text);
+                pos = len;
             },
             _ => {}
         }
@@ -99,13 +136,22 @@ fn recall(history: &[String], back: usize) -> Option<&String> {
     history.iter().rev().filter(|entry| !entry.contains('\n')).nth(back - 1)
 }
 
-fn replace_line(line: &mut [u8], len: usize, text: &str) -> usize {
+fn replace_line(line: &mut [u8], pos: usize, len: usize, text: &str) -> usize {
+    print!("{}", core::str::from_utf8(&line[pos..len]).unwrap());
     for _ in 0..len {
         print!("\x08");
     }
     line[..text.len()].copy_from_slice(text.as_bytes());
     print!("{}", text);
     text.len()
+}
+
+fn redraw(rest: &[u8], blanks: usize) {
+    print!("{}", core::str::from_utf8(rest).unwrap());
+    for _ in 0..blanks {
+        print!(" ");
+    }
+    vga::cursor_left(rest.len() + blanks);
 }
 
 struct Kernel;

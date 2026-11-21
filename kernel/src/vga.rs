@@ -3,11 +3,15 @@
 
 use core::fmt;
 use crate::lock::SpinLock;
+use crate::port::outb;
 
 const BUFFER_ADDR: usize = 0xB8000;
 const WIDTH: usize = 80;
 const HEIGHT: usize = 25;
 const WHITE_ON_BLACK: u16 = 0x0F00;
+
+const CRTC_INDEX: u16 = 0x3D4;
+const CRTC_DATA: u16 = 0x3D5;
 
 fn write_cell(row: usize, col: usize, value: u16) {
     assert!(row < HEIGHT && col < WIDTH);
@@ -34,6 +38,7 @@ impl Writer {
         }
         self.row = 0;
         self.col = 0;
+        self.move_cursor();
     }
 
     pub fn write_byte(&mut self, byte: u8) {
@@ -62,6 +67,17 @@ impl Writer {
         if self.col > 0 {
             self.col -= 1;
             write_cell(self.row, self.col, WHITE_ON_BLACK | b' ' as u16);
+        }
+    }
+
+    // Moves the blinking cursor to the cell the next character goes in.
+    fn move_cursor(&self) {
+        let cell = self.row * WIDTH + self.col.min(WIDTH - 1);
+        unsafe {
+            outb(CRTC_INDEX, 0x0F);
+            outb(CRTC_DATA, cell as u8);
+            outb(CRTC_INDEX, 0x0E);
+            outb(CRTC_DATA, (cell >> 8) as u8);
         }
     }
 }
@@ -108,11 +124,19 @@ static WRITER: SpinLock<Writer> = SpinLock::new(Writer { row: 0, col: 0 });
 pub fn clear_screen() {
     WRITER.lock().clear();
 }
+// Moves the cursor `n` cells to the left in the current row.
+pub fn cursor_left(n: usize) {
+    let mut writer = WRITER.lock();
+    writer.col = writer.col.saturating_sub(n);
+    writer.move_cursor();
+}
 
 // Called by print!/println! - must be pub so macros can expand in other modules.
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    WRITER.lock().write_fmt(args).unwrap();
+    let mut writer = WRITER.lock();
+    writer.write_fmt(args).unwrap();
+    writer.move_cursor();
 }
 
 #[macro_export]
