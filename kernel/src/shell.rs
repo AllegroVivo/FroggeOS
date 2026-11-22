@@ -168,6 +168,14 @@ impl calc::Host for Kernel {
     fn uptime_ms(&self) -> i64 {
         (timer::ticks() * 1000 / timer::HZ) as i64
     }
+
+    fn beep(&mut self, hz: u32, ms: u64) {
+        speaker::beep(hz, ms);
+    }
+
+    fn sleep(&mut self, ms: u64) {
+        timer::sleep(ms);
+    }
 }
 
 fn run_command(

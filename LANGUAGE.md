@@ -281,8 +281,8 @@ Built-in namespaces, first draft (they grow with the roadmap):
 | Namespace | Functions |
 |---|---|
 | `Console` | `Write`, `WriteLine`, `Clear` |
-| `Speaker` | `Beep` |
-| `Timer` | `Uptime` (milliseconds, as an Int64), `Sleep` |
+| `Speaker` | `Beep(hz, ms)`, with 20 to 20000 Hz and up to 10000 ms |
+| `Timer` | `Uptime` (milliseconds, as an Int64), `Sleep(ms)`, up to 10000 ms |
 | `File` | `ReadAllText`, `WriteAllText`, `Exists` |
 | `Math` | |
 

@@ -109,6 +109,8 @@ pub trait Host {
     fn write(&mut self, text: &str);
     fn clear(&mut self);
     fn uptime_ms(&self) -> i64;
+    fn beep(&mut self, hz: u32, ms: u64);
+    fn sleep(&mut self, ms: u64);
 }
 
 // Variables seen by the currently executing code.
@@ -184,6 +186,8 @@ pub enum Error<'a> {
     // Calling a `Namespace.Name` that isn't defined as a builtin.
     UnknownBuiltIn(&'a str, &'a str),
     ArgumentCount { name: &'a str, wanted: usize, found: usize },
+    // An argument a built-in cannot use.
+    BadArgument { name: &'a str, needs: &'static str },
     NoReturn(&'a str),          // a function indicating a return without the `return` statement
     NoValue(&'a str),           // attempting to use the result of a void function
     TooDeep,                    // line used more than `MAX_STACK` stack frames
@@ -217,6 +221,7 @@ impl fmt::Display for Error<'_> {
                 let s = if *wanted == 1 { "" } else { "s" };
                 write!(f, "'{}' takes {} argument{}, not {}", name, wanted, s, found)
             },
+            Error::BadArgument { name, needs } => write!(f, "'{}' needs {}", name, needs),
             Error::NoReturn(name) => write!(f, "'{}' must return a value", name),
             Error::NoValue(name) => write!(f, "'{}' is void and has no value to be used", name),
             Error::TooDeep => write!(f, "nested too deeply (over {} KB of stack)", MAX_STACK / 1024),
@@ -541,6 +546,8 @@ enum BuiltIn {
     WriteLine,          // Console.WriteLine(str) / Console.WriteLine()
     Clear,              // Console.Clear()
     Uptime,             // Timer.Uptime()
+    Sleep,              // Timer.Sleep(ms)
+    Beep,               // Speaker.Beep(hz, ms)
 }
 
 impl BuiltIn {
@@ -550,6 +557,8 @@ impl BuiltIn {
             ("Console", "WriteLine") => BuiltIn::WriteLine,
             ("Console", "Clear") => BuiltIn::Clear,
             ("Timer", "Uptime") => BuiltIn::Uptime,
+            ("Timer", "Sleep") => BuiltIn::Sleep,
+            ("Speaker", "Beep") => BuiltIn::Beep,
             _ => return None,
         })
     }
@@ -560,6 +569,8 @@ impl BuiltIn {
             BuiltIn::WriteLine => "Console.WriteLine",
             BuiltIn::Clear => "Console.Clear",
             BuiltIn::Uptime => "Timer.Uptime",
+            BuiltIn::Sleep => "Timer.Sleep",
+            BuiltIn::Beep => "Speaker.Beep",
         }
     }
 }
@@ -1268,10 +1279,21 @@ fn call_builtin<'a>(
         (BuiltIn::WriteLine, [value]) => vars.host.write(&format!("{}\n", value)),
         (BuiltIn::Clear, []) => vars.host.clear(),
         (BuiltIn::Uptime, []) => return Ok(Some(Value::Int64(vars.host.uptime_ms()))),
+        (BuiltIn::Sleep, [Value::Int64(ms @ 0..=10_000)]) => vars.host.sleep(*ms as u64),
+        (BuiltIn::Beep, [Value::Int64(hz @ 20..=20_000), Value::Int64(ms @ 0..=10_000)]) => {
+            vars.host.beep(*hz as u32, *ms as u64)
+        },
+        (BuiltIn::Sleep, [_]) => {
+            return Err(Error::BadArgument { name: builtin.name(), needs: "0 - 10000 ms" });
+        },
+        (BuiltIn::Beep, [_, _]) => {
+            return Err(Error::BadArgument { name: builtin.name(), needs: "20 - 20000 hz, 0 - 10000 ms" });
+        },
         _ => {
             let wanted = match builtin {
-                BuiltIn::Write | BuiltIn::WriteLine => 1,
+                BuiltIn::Write | BuiltIn::WriteLine | BuiltIn::Sleep => 1,
                 BuiltIn::Clear | BuiltIn::Uptime => 0,
+                BuiltIn::Beep => 2,
             };
             return Err(Error::ArgumentCount { name: builtin.name(), wanted, found: values.len() });
         }

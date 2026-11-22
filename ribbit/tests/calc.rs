@@ -1,9 +1,11 @@
 use ribbit::calc::{Functions, Host, Variables, evaluate, is_complete};
 
-// Stands in for the kernel: keeps what Ribbit writes, and has a clock
-// that always says 1234 ms.
+// Stands in for the kernel: keeps what Ribbit writes, notes each beep
+// as [beep hz ms], and has a clock that says 1234 ms plus however long
+// the line has slept.
 struct TestHost {
     output: String,
+    slept: i64,
 }
 
 impl Host for TestHost {
@@ -16,7 +18,15 @@ impl Host for TestHost {
     }
 
     fn uptime_ms(&self) -> i64 {
-        1234
+        1234 + self.slept
+    }
+
+    fn beep(&mut self, hz: u32, ms: u64) {
+        self.output.push_str(&format!("[beep {} {}]", hz, ms));
+    }
+
+    fn sleep(&mut self, ms: u64) {
+        self.slept += ms as i64;
     }
 }
 
@@ -27,7 +37,7 @@ fn check(session: &[(&str, &str)]) {
     let mut vars = Variables::new();
     let mut functions = Functions::new();
     for &(line, expected) in session {
-        let mut host = TestHost { output: String::new() };
+        let mut host = TestHost { output: String::new(), slept: 0 };
         let printed = match evaluate(line, &mut vars, &mut functions, &mut host) {
             Ok(Some(value)) => value.to_string(),
             Ok(None) => String::new(),
@@ -561,6 +571,32 @@ fn console() {
 }
 
 #[test]
+fn speaker_and_sleep() {
+    check(&[
+        ("Speaker.Beep(440, 200);", "[beep 440 200]"),
+        ("Timer.Sleep(100); Timer.Uptime();", "1334"),
+        // A tune: three beeps with a pause after each.
+        (
+            "for (Int64 n = 1; n <= 3; n++) { Speaker.Beep(220 * n, 50); Timer.Sleep(50); } Timer.Uptime();",
+            "[beep 220 50][beep 440 50][beep 660 50]1384",
+        ),
+        // The limits themselves are allowed.
+        ("Speaker.Beep(20, 0); Speaker.Beep(20000, 10000);", "[beep 20 0][beep 20000 10000]"),
+        ("Timer.Sleep(0); Timer.Sleep(10000); Timer.Uptime();", "11234"),
+        // Errors.
+        ("Speaker.Beep(19, 200);", "Error: 'Speaker.Beep' needs 20 - 20000 hz, 0 - 10000 ms"),
+        ("Speaker.Beep(440, 10001);", "Error: 'Speaker.Beep' needs 20 - 20000 hz, 0 - 10000 ms"),
+        ("Speaker.Beep(\"A\", 200);", "Error: 'Speaker.Beep' needs 20 - 20000 hz, 0 - 10000 ms"),
+        ("Timer.Sleep(-1);", "Error: 'Timer.Sleep' needs 0 - 10000 ms"),
+        ("Timer.Sleep(true);", "Error: 'Timer.Sleep' needs 0 - 10000 ms"),
+        ("Speaker.Beep(440);", "Error: 'Speaker.Beep' takes 2 arguments, not 1"),
+        ("Timer.Sleep();", "Error: 'Timer.Sleep' takes 1 argument, not 0"),
+        ("Speaker.Boop();", "Error: 'Speaker.Boop' is not a built-in function"),
+        ("Int64 t = Timer.Sleep(1);", "Error: 'Timer.Sleep' is void and has no value to be used"),
+    ]);
+}
+
+#[test]
 fn interpolation() {
     check(&[
         ("Int64 x = 42;", "42"),
@@ -740,7 +776,7 @@ fn function_errors() {
 // The text before the spot that its mistake points to. None means the
 // mistake has no place, because it only showed up while running.
 fn before_mistake(text: &str) -> Option<&str> {
-    let mut host = TestHost { output: String::new() };
+    let mut host = TestHost { output: String::new(), slept: 0 };
     let failure = evaluate(text, &mut Variables::new(), &mut Functions::new(), &mut host).err()?;
     failure.at.map(|at| &text[..at])
 }
