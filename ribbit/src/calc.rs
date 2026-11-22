@@ -11,6 +11,7 @@ use core::fmt;
 use core::iter::Peekable;
 use core::str::CharIndices;
 use crate::calc::Token::{LeftBracket, RightBracket};
+use crate::notes;
 
 // A value that the language works with.
 #[derive(Clone)]
@@ -573,6 +574,7 @@ enum BuiltIn {
     Uptime,             // Timer.Uptime()
     Sleep,              // Timer.Sleep(ms)
     Beep,               // Speaker.Beep(hz, ms)
+    Play,               // Speaker.Play(tune)
 }
 
 impl BuiltIn {
@@ -584,6 +586,7 @@ impl BuiltIn {
             ("Timer", "Uptime") => BuiltIn::Uptime,
             ("Timer", "Sleep") => BuiltIn::Sleep,
             ("Speaker", "Beep") => BuiltIn::Beep,
+            ("Speaker", "Play") => BuiltIn::Play,
             _ => return None,
         })
     }
@@ -596,6 +599,7 @@ impl BuiltIn {
             BuiltIn::Uptime => "Timer.Uptime",
             BuiltIn::Sleep => "Timer.Sleep",
             BuiltIn::Beep => "Speaker.Beep",
+            BuiltIn::Play => "Speaker.Play",
         }
     }
 }
@@ -1401,9 +1405,13 @@ fn call_builtin<'a>(
         (BuiltIn::Beep, [_, _]) => {
             return Err(Error::BadArgument { name: builtin.name(), needs: "20 - 20000 hz, 0 - 10000 ms" });
         },
+        (BuiltIn::Play, [Value::String(tune)]) => play(tune, vars)?,
+        (BuiltIn::Play, [_]) => {
+            return Err(Error::BadArgument { name: builtin.name(), needs: "a String of valid notation" });
+        },
         _ => {
             let wanted = match builtin {
-                BuiltIn::Write | BuiltIn::WriteLine | BuiltIn::Sleep => 1,
+                BuiltIn::Write | BuiltIn::WriteLine | BuiltIn::Sleep | BuiltIn::Play => 1,
                 BuiltIn::Clear | BuiltIn::Uptime => 0,
                 BuiltIn::Beep => 2,
             };
@@ -1411,6 +1419,24 @@ fn call_builtin<'a>(
         }
     }
     Ok(None)
+}
+
+// Plays a tune thru the host.
+#[inline(never)]
+fn play<'a>(tune: &str, vars: &mut Env<'a, '_>) -> Result<(), Error<'a>> {
+    let Ok(tune) = notes::parse(tune) else {
+        return Err(Error::BadArgument { name: "Speaker.Play", needs: "a valid String of Ribbit notation" });
+    };
+    for note in tune {
+        if vars.host.cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match note.hz {
+            Some(hz) => vars.host.beep(hz, note.ms),
+            None => vars.host.sleep(note.ms),
+        }
+    }
+    Ok(())
 }
 
 // Calls a function and returns the value it gives back (or None).

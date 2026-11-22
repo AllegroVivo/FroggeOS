@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-22):** milestones 0 and 1 are done, and work on M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker, a PS/2 keyboard with arrow keys, Caps Lock, Ctrl and Alt (Ctrl+C throws away a typed line or stops running code), a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean, Char and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 140 KB of its 256 KB budget.
+**Status (2026-11-22):** milestones 0 and 1 are done, and work on M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker with a note player, a PS/2 keyboard with arrow keys, Caps Lock, Ctrl and Alt (Ctrl+C throws away a typed line or stops running code), a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean, Char and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 144 KB of its 256 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -99,7 +99,7 @@
 - **3.2 Serial port:** output first (2.1.2) ✅; input later ☆ so you can type into FroggeOS from your own terminal
 - **3.3 PC speaker** (TempleOS's only sound device)
   - 3.3.1 A beep at a chosen frequency, using PIT channel 2 and port 0x61. To hear it, QEMU needs `-audiodev` and `pcspk-audiodev`. ✅
-  - 3.3.2 A note player, such as `play "C4 E4 G4"`
+  - 3.3.2 A note player (`play C4 E4 G4:500 R C5` at the prompt, `Speaker.Play` in Ribbit) ✅
 - **3.4 PS/2 mouse**
   - 3.4.1 Enable the 8042 controller's second (aux) port and IRQ 12
   - 3.4.2 Turn its 3-byte packets into movement (dx, dy) and button states
@@ -168,7 +168,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.5 Functions**
   - 6.5.1 Definitions, parameters, return values, recursion ✅
   - 6.5.2 Call frames and local scopes, plus a recursion limit so `f(){f();}` reports an error instead of overflowing the kernel stack ✅ (each line may use 48 KB of the 64 KB stack, both while it's read and while it runs)
-  - 6.5.3 Built-in functions written in Rust, with .NET-style names: `Console.Write`, `Console.WriteLine`, `Console.Clear`, `Timer.Uptime`, `Speaker.Beep` and `Timer.Sleep` ✅, …
+  - 6.5.3 Built-in functions written in Rust, with .NET-style names: `Console.Write`, `Console.WriteLine`, `Console.Clear`, `Timer.Uptime`, `Speaker.Beep`, `Speaker.Play` and `Timer.Sleep` ✅, …
 - **6.6 Commands, scripts and the library**
   - 6.6.1 A command table, argparse-style. Each command declares its arguments (positional, `-f`/`--flag`, options with values), and one shared parser checks them and generates `help <command>`. A line whose first word is a command runs it; anything else is code.
   - 6.6.2 Make kernel features available as built-ins: files (5), graphics (4), sound (3.3), tasks (2.6)
@@ -193,7 +193,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.9** ☆ A disassembler for the code generator, and a debugger with breakpoints (it uses the existing `int3` handler)
 
 ### 7. Shell, user interface and apps
-- **7.1 Text shell** ✅ (help, clear, echo, uptime, date, beep, history, heap, selftest, vars, lang, calculator)
+- **7.1 Text shell** ✅ (help, clear, echo, uptime, date, beep, play, history, heap, selftest, vars, lang, calculator)
   - 7.1.1 Line editing: move the cursor left and right, insert mid-line, Delete (needs 3.1.3) ✅
   - 7.1.2 Up and down arrows recall history ✅
   - 7.1.3 Tab completion

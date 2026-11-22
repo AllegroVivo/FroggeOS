@@ -3,7 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
-use ribbit::calc;
+use ribbit::{calc, notes};
 use crate::{heap, keyboard, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
@@ -209,6 +209,7 @@ fn run_command(
             println!("uptime       time since the timer started");
             println!("date         show the date and time");
             println!("beep         play a tone: beep [hz] [ms], 440 Hz for 200 ms by default");
+            println!("play         play a tune: play C4 E4 G4:500 R C5 (125 ms a note)");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("selftest     check that the kernel's parts still work");
@@ -237,6 +238,24 @@ fn run_command(
             match (hz, ms) {
                 (Some(hz @ 20..=20_000), Some(ms @ 0..=10_000)) => speaker::beep(hz, ms),
                 _ => println!("beep values must be between 20-20,000 hz and ms: 0-10,000 ms"),
+            }
+        },
+        "play" => {
+            let tune = line.trim_start()["play".len()..].trim();
+            match notes::parse(tune) {
+                Ok(tune) => {
+                    for note in tune {
+                        if keyboard::take_ctrl_c() {
+                            println!("^C");
+                            break;
+                        }
+                        match note.hz {
+                            Some(hz) => speaker::beep(hz, note.ms),
+                            None => timer::sleep(note.ms),
+                        }
+                    }
+                },
+                Err(word) => println!("'{}' is not a valid notation", word),
             }
         },
         "history" => {

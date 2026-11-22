@@ -669,6 +669,20 @@ fn speaker_and_sleep() {
 }
 
 #[test]
+fn speaker_play() {
+    check(&[
+        // Each note is a beep, and a rest is a sleep.
+        ("Speaker.Play(\"C4 E4 G4:500\");", "[beep 262 125][beep 330 125][beep 392 500]"),
+        ("Speaker.Play(\"A4 R:100 A5\"); Timer.Uptime();", "[beep 440 125][beep 880 125]1334"),
+        ("Speaker.Play(\"\");", ""),
+        // A tune with a mistake plays nothing.
+        ("Speaker.Play(\"C4 H4\");", "Error: 'Speaker.Play' needs a valid String of Ribbit notation"),
+        ("Speaker.Play(440);", "Error: 'Speaker.Play' needs a String of valid notation"),
+        ("Speaker.Play();", "Error: 'Speaker.Play' takes 1 argument, not 0"),
+    ]);
+}
+
+#[test]
 fn ctrl_c() {
     let mut vars = Variables::new();
     let mut functions = Functions::new();
@@ -687,6 +701,11 @@ fn ctrl_c() {
     assert_eq!(run("Int64 Fib(Int64 n) { if (n < 2) { return n; } return Fib(n - 1) + Fib(n - 2); }", 0), "");
     assert_eq!(run("Fib(20);", 1000), "Error: keyboard interrupt (Ctrl+C) pressed");
     assert_eq!(run("Fib(10);", 0), "55");
+    // Speaker.Play asks before every note.
+    assert_eq!(
+        run("Speaker.Play(\"C4 D4 E4 F4\");", 3),
+        "[beep 262 125][beep 294 125]Error: keyboard interrupt (Ctrl+C) pressed"
+    );
     // A line with no loops or calls never asks.
     assert_eq!(run("6 * 7;", 1), "42");
 }
