@@ -60,15 +60,10 @@ pub fn init() {
     unsafe { asm!("mov {0:x}, cs", out(reg) cs, options(nomem, nostack, preserves_flags)) };
 
     let mut idt = IDT.lock();
-    idt[0] = IdtEntry::new(divide_error, cs);
-    idt[3] = IdtEntry::new(breakpoint, cs);
-    idt[6] = IdtEntry::new(invalid_opcode, cs);
-    idt[8] = IdtEntry::new(double_fault, cs);
-    idt[8].ist = gdt::DOUBLE_FAULT_IST; // runs on the emergency stack.
-    idt[13] = IdtEntry::new(general_protection, cs);
-    idt[14] = IdtEntry::new(page_fault, cs);
-    idt[32] = IdtEntry::new(timer_interrupt, cs);
-    idt[33] = IdtEntry::new(keyboard_interrupt, cs);
+    for (vector, handler) in VECTORS.iter().enumerate() {
+        idt[vector] = IdtEntry::new(handler.0, cs);
+    }
+    idt[8].ist = gdt::DOUBLE_FAULT_IST; // runs on the emergency stack
 
     let pointer = IdtPointer {
         limit: (size_of::<[IdtEntry; 256]>() - 1) as u16,
@@ -97,10 +92,10 @@ pub fn are_enabled() -> bool {
 // When an exception occurs, the CPU pushes ``RIP``, ``CS``, ``RFLAGS``, ``RSP``
 // and ``SS`` and jumps to the handler. Some exceptions also push an error code.
 
-macro_rules! exception_stub {
-    ($name:ident, $vector:literal) => {
+macro_rules! stub {
+    ($vector:literal) => {{
         #[unsafe(naked)]
-        extern "C" fn $name() {
+        extern "C" fn entry() {
             naked_asm!(
                 "push 0",   // dummy error code
                 "push {vector}",
@@ -109,10 +104,11 @@ macro_rules! exception_stub {
                 common = sym exception_common,
             );
         }
-    };
-    ($name:ident, $vector:literal, has_error_code) => {
+        entry
+    }};
+    ($vector:literal, has_error_code) => {{
         #[unsafe(naked)]
-        extern "C" fn $name() {
+        extern "C" fn entry() {
             naked_asm!(
                 "push {vector}",
                 "jmp {common}",
@@ -120,17 +116,47 @@ macro_rules! exception_stub {
                 common = sym exception_common,
             );
         }
-    };
+        entry
+    }};
 }
 
-exception_stub!(divide_error, 0);
-exception_stub!(breakpoint, 3);
-exception_stub!(invalid_opcode, 6);
-exception_stub!(double_fault, 8, has_error_code);
-exception_stub!(general_protection, 13, has_error_code);
-exception_stub!(page_fault, 14, has_error_code);
-exception_stub!(timer_interrupt, 32);
-exception_stub!(keyboard_interrupt, 33);
+// CPU exceptions and their handlers.
+static VECTORS: [(extern "C" fn(), &str); 34] = [
+    (stub!(0), "divide error"),
+    (stub!(1), "debug"),
+    (stub!(2), "non-maskable interrupt"),
+    (stub!(3), "breakpoint"),
+    (stub!(4), "overflow"),
+    (stub!(5), "bound range exceeded"),
+    (stub!(6), "invalid opcode"),
+    (stub!(7), "device not available"),
+    (stub!(8, has_error_code), "double fault"),
+    (stub!(9), "coprocessor segment overrun"),
+    (stub!(10, has_error_code), "invalid TSS"),
+    (stub!(11, has_error_code), "segment not present"),
+    (stub!(12, has_error_code), "stack-segment fault"),
+    (stub!(13, has_error_code), "general protection fault"),
+    (stub!(14, has_error_code), "page fault"),
+    (stub!(15), "reserved"),
+    (stub!(16), "x87 floating-point error"),
+    (stub!(17, has_error_code), "alignment check"),
+    (stub!(18), "machine check"),
+    (stub!(19), "SIMD floating-point error"),
+    (stub!(20), "virtualization exception"),
+    (stub!(21, has_error_code), "control protection"),
+    (stub!(22), "reserved"),
+    (stub!(23), "reserved"),
+    (stub!(24), "reserved"),
+    (stub!(25), "reserved"),
+    (stub!(26), "reserved"),
+    (stub!(27), "reserved"),
+    (stub!(28), "hypervisor injection"),
+    (stub!(29, has_error_code), "VMM communication"),
+    (stub!(30, has_error_code), "security exception"),
+    (stub!(31), "reserved"),
+    (stub!(32), "timer"),
+    (stub!(33), "keyboard"),
+];
 
 // Saves the registers a Rust function may to change, calls ``exception_handler``,
 // restores them, and returns to the interrupted code.
@@ -187,15 +213,7 @@ extern "C" fn exception_handler(frame: &ExceptionFrame) {
         return;
     }
 
-    let name = match frame.vector {
-        0 => "divide error",
-        3 => "breakpoint",
-        6 => "invalid opcode",
-        8 => "double fault",
-        13 => "general protection fault",
-        14 => "page fault",
-        _ => "unknown exception",
-    };
+    let name = VECTORS[frame.vector as usize].1;
     println!(
         "EXCEPTION: {} (#{}) at {:#x}, error code {:#x}",
         name, frame.vector, frame.rip, frame.error_code
