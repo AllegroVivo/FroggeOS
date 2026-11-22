@@ -4,6 +4,7 @@
 use core::fmt;
 use crate::lock::SpinLock;
 use crate::port::outb;
+use crate::serial;
 
 const BUFFER_ADDR: usize = 0xB8000;
 const WIDTH: usize = 80;
@@ -129,6 +130,9 @@ pub fn cursor_left(n: usize) {
     let mut writer = WRITER.lock();
     writer.col = writer.col.saturating_sub(n);
     writer.move_cursor();
+    for _ in 0..n {
+        serial::send(0x08);
+    }
 }
 
 // Called by print!/println! - must be pub so macros can expand in other modules.
@@ -137,6 +141,7 @@ pub fn _print(args: fmt::Arguments) {
     let mut writer = WRITER.lock();
     writer.write_fmt(args).unwrap();
     writer.move_cursor();
+    serial::Serial.write_fmt(args).unwrap();
 }
 
 #[macro_export]

@@ -12,6 +12,7 @@ mod paging;
 mod pic;
 mod port;
 mod rtc;
+mod serial;
 mod shell;
 mod speaker;
 mod timer;
@@ -24,6 +25,7 @@ use core::panic::PanicInfo;
 pub extern "C" fn _start() -> ! {
     vga::clear_screen();
 
+    serial::init();
     gdt::init();
     interrupts::init();
     paging::init();
