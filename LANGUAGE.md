@@ -1,6 +1,6 @@
 # Ribbit: the FroggeOS language
 
-**Status (2026-11-19):** design decided (roadmap ⚑ 6.1). Ribbit's core now runs at the FroggeOS prompt: Int64, Boolean and String values, blocks, loops, functions and recursion. ROADMAP.md tracks what's built. Ribbit scripts are `.rbt` files, and the Rust crate is `ribbit`.
+**Status (2026-11-22):** design decided (roadmap ⚑ 6.1). Ribbit's core now runs at the FroggeOS prompt: Int64, Boolean, Char and String values, blocks, loops, functions and recursion. ROADMAP.md tracks what's built. Ribbit scripts are `.rbt` files, and the Rust crate is `ribbit`.
 
 **In one line:** C#-style syntax with CLR type names, C#'s keywords and operator precedence, full generics, `$"..."` strings, .NET-style namespaces, reference counting instead of a garbage collector, raw pointers inside `unsafe`, and argparse-style shell commands next to the code.
 
@@ -119,7 +119,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 | Return type only | `Void` | none |
 
 - **`Boolean` is strict, as in C#.** Comparisons give `true` or `false`, and `if`, `while`, `!`, `&&` and `||` only accept a Boolean. `if (n)` has to be written `if (n != 0)`. It prints as `True` or `False`, like C#'s `ToString()`.
-- **A `Char` is 1 byte,** a code-page-437 character: what the VGA text screen shows and what the keyboard driver produces. C#'s Char is 2 bytes (UTF-16). `Char` and `Byte` are the same size but different types: a `Byte` prints as a number (`70`), a `Char` as text (`F`).
+- **A `Char` is 1 byte,** a code-page-437 character: what the VGA text screen shows and what the keyboard driver produces. C#'s Char is 2 bytes (UTF-16). `Char` and `Byte` are the same size but different types: a `Byte` prints as a number (`70`), a `Char` as text (`F`). For now Chars, and the characters in a String, are ASCII only (`'\x00'` to `'\x7F'`); the rest of code page 437 comes when strings are stored as bytes.
 - **`String` works like C#'s.** It's immutable and supports `+`, `.Length` and `s[i]` (which gives a `Char`). At the prompt it prints as its text, without quotes, as `Console.WriteLine` would. Until Ribbit has `null`, a String must be given a value: `String s;` is an error.
 - **`Object` is the base of every class.** `is`, `as` and `typeof` need it.
 - **Conversions follow C#.** Widening is automatic (`Int32` to `Int64`). Narrowing needs a cast: `(Byte)x`. Integer literals adapt to the type they're used with.
@@ -132,7 +132,7 @@ All keywords are lowercase and fully reserved. C# treats `var`, `yield`, `async`
 - **Names:** letters, digits and `_`, not starting with a digit. Case matters. Follow the .NET conventions: PascalCase for types, functions and namespaces, camelCase for locals and parameters, and lowercase for shell commands.
 - **Numbers:** `42`, `0x2A` and `3.14`
 - **Characters:** `'A'`, `'\n'`, `'\x41'`
-- **Strings:** `"..."`, with the escapes `\n \t \\ \" \0 \xNN`
+- **Strings:** `"..."`, with the escapes `\n \t \\ \" \' \0 \xNN`
 - **Interpolated strings:** `$"x = {x}, hex {x:X8}"`. Each `{...}` is ordinary code and is checked like any other expression. As in C#, `{{` and `}}` stand for `{` and `}`. After a `:`, `X` or `x` prints hex in upper or lower case, padded with zeros to the width that follows: `{255:X4}` is `00FF`. For now, unlike C#, a `{...}` can't hold a `"`.
 - **Comments:** `//` to the end of the line, and `/* ... */`
 - **Whitespace:** spaces, tabs and newlines only separate tokens.

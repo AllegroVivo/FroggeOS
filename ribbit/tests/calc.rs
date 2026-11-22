@@ -558,6 +558,64 @@ fn strings() {
 }
 
 #[test]
+fn chars() {
+    check(&[
+        // A Char is one character, and prints as itself.
+        ("'A';", "A"),
+        ("Char c = 'x';", "x"),
+        ("Char nothing;", "\0"), // starts as '\0', like any zeroed value
+        ("nothing == '\\0';", "True"),
+        // The escapes work in a Char, and \' and \xNN work in Strings too.
+        ("'\\n';", "\n"),
+        ("'\\'';", "'"),
+        ("'\\\\';", "\\"),
+        ("'\\x41';", "A"),
+        ("\"\\x48\\x69, it\\'s me\";", "Hi, it's me"),
+        // Chars compare by their codes.
+        ("'a' < 'b';", "True"),
+        ("c == 'x';", "True"),
+        ("'Z' >= 'a';", "False"),
+        // + with a String joins a Char, either way round.
+        ("\"a\" + 'b';", "ab"),
+        ("'a' + \"b\";", "ab"),
+        ("$\"[{c}]\";", "[x]"),
+        // s[i] gives the Char at i, counting from 0, and s.Length how many.
+        ("String s = \"Ribbit\";", "Ribbit"),
+        ("s[0];", "R"),
+        ("s[5];", "t"),
+        ("\"abc\"[1];", "b"),
+        ("s.Length;", "6"),
+        ("\"\".Length;", "0"),
+        ("(s + \"!\").Length;", "7"),
+        ("Int64 count = 0; for (Int64 i = 0; i < s.Length; i++) { if (s[i] == 'b') { count++; } } count;", "2"),
+        // Functions can take and give back Chars.
+        ("Char First(String t) { return t[0]; }", ""),
+        ("First(\"Hop\");", "H"),
+        // A Console built-in still needs its brackets.
+        ("Console.WriteLine;", "Error: expected '('"),
+        // Errors.
+        ("'ab';", "Error: a Char may only hold one character"),
+        ("'';", "Error: a Char may only hold one character"),
+        ("'a", "Error: missing a closing '"),
+        ("'\\x7G';", "Error: '\\x' needs two hex digits"),
+        ("'\\x80';", "Error: only supports '\\x00' to '\\x7F'"),
+        ("s[6];", "Error: index 6 is outside a value of length 6"),
+        ("s[-1];", "Error: index -1 is outside a value of length 6"),
+        ("s[true];", "Error: an index needs Int64, not Boolean"),
+        ("c[0];", "Error: '[]' needs String, not Char"),
+        ("s.Size;", "Error: String has no member 'Size'"),
+        ("c.Length;", "Error: Char has no member 'Length'"),
+        ("s[0;", "Error: expected ']'"),
+        ("'a' + 1;", "Error: '+' needs Int64, not Char"),
+        ("'a' == \"a\";", "Error: '==' needs Char, not String"),
+        ("Char d = \"d\";", "Error: 'd' needs Char, not String"),
+        ("Int64 n = 'n';", "Error: 'n' needs Int64, not Char"),
+    ]);
+    // A '{' inside a Char doesn't open a block.
+    assert!(is_complete("Char open = '{';"));
+}
+
+#[test]
 fn console() {
     check(&[
         ("Console.WriteLine(\"Hello\");", "Hello\n"),

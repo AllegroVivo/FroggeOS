@@ -10,12 +10,14 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::iter::Peekable;
 use core::str::CharIndices;
+use crate::calc::Token::{LeftBracket, RightBracket};
 
 // A value that the language works with.
 #[derive(Clone)]
 pub enum Value {
     Int64(i64),
     Boolean(bool),
+    Char(u8),
     String(Rc<String>)
 }
 
@@ -24,6 +26,7 @@ impl Value {
         match self {
             Value::Int64(_) => Type::Int64,
             Value::Boolean(_) => Type::Boolean,
+            Value::Char(_) => Type::Char,
             Value::String(_) => Type::String,
         }
     }
@@ -53,6 +56,7 @@ impl fmt::Display for Value {
             Value::Int64(n) => write!(f, "{}", n),
             Value::Boolean(true) => write!(f, "True"),
             Value::Boolean(false) => write!(f, "False"),
+            Value::Char(c) => write!(f, "{}", *c as char),
             Value::String(s) => write!(f, "{}", s),
         }
     }
@@ -63,6 +67,7 @@ impl fmt::Display for Value {
 pub enum Type {
     Int64,
     Boolean,
+    Char,
     String,
 }
 
@@ -71,6 +76,7 @@ impl Type {
         match self {
             Type::Int64 => "Int64",
             Type::Boolean => "Boolean",
+            Type::Char => "Char",
             Type::String => "String",
         }
     }
@@ -80,6 +86,7 @@ impl Type {
         match self {
             Type::Int64 => Some(Value::Int64(0)),
             Type::Boolean => Some(Value::Boolean(false)),
+            Type::Char => Some(Value::Char(0)),
             Type::String => None,
         }
     }
@@ -170,30 +177,30 @@ impl<'a> Env<'a, '_> {
 }
 
 pub enum Error<'a> {
-    BadChar(char),              // a character that isn't part of any token
-    Syntax(&'static str),       // the tokens don't form an expression
+    BadChar(char),                  // a character that isn't part of any token
+    Syntax(&'static str),           // the tokens don't form an expression
     DivideByZero,
-    Overflow,                   // a number or result is too big for an i64
-    UnknownName(&'a str),       // a name with no value stored under it
-    LoopLimit,                  // a loop repeated `MAX_LOOP_ROUNDS` times
-    Cancelled,                  // program terminated by the host
+    Overflow,                       // a number or result is too big for an i64
+    UnknownName(&'a str),           // a name with no value stored under it
+    LoopLimit,                      // a loop repeated `MAX_LOOP_ROUNDS` times
+    Cancelled,                      // program terminated by the host
     // A value of the wrong type.
     WrongType { place: &'static str, wanted: &'static str, found: &'static str},
-    Undeclared(&'a str),        // assigning to a name that was not declared
-    Constant(&'a str),          // assigning to a const
+    Undeclared(&'a str),            // assigning to a name that was not declared
+    Constant(&'a str),              // assigning to a const
     // Attempting to store the wrong type into a variable.
     VariableType { name: &'a str, wanted: &'static str, found: &'static str },
-    AlreadyDeclared(&'a str),   // a name is previously declared within a context
-    UnknownFunction(&'a str),   // calling a name that isn't a function
-    // Calling a `Namespace.Name` that isn't defined as a builtin.
-    UnknownBuiltIn(&'a str, &'a str),
+    AlreadyDeclared(&'a str),       // a name is previously declared within a context
+    UnknownFunction(&'a str),       // calling a name that isn't a function
+    UnknownBuiltIn(&'a str, &'a str), // Calling a `Namespace.Name` that isn't defined as a builtin
     ArgumentCount { name: &'a str, wanted: usize, found: usize },
-    // An argument a built-in cannot use.
-    BadArgument { name: &'a str, needs: &'static str },
-    NoReturn(&'a str),          // a function indicating a return without the `return` statement
-    NoValue(&'a str),           // attempting to use the result of a void function
-    TooDeep,                    // line used more than `MAX_STACK` stack frames
-    AssertFailed(Option<Value>) // an assert's provided condition evaluates to `false`.
+    BadArgument { name: &'a str, needs: &'static str }, // An argument a built-in cannot use
+    NoReturn(&'a str),              // a function indicating a return without the `return` statement
+    NoValue(&'a str),               // attempting to use the result of a void function
+    BadIndex { index: i64, length: usize }, // `x[i]` used outside a valid context
+    NoMember { ty: &'static str, name: &'a str }, // `.Name` is undefined on the type
+    TooDeep,                        // line used more than `MAX_STACK` stack frames
+    AssertFailed(Option<Value>)     // an assert's provided condition evaluates to `false`
 }
 
 // Display is used by ``println!("{}", error)``
@@ -227,6 +234,10 @@ impl fmt::Display for Error<'_> {
             Error::BadArgument { name, needs } => write!(f, "'{}' needs {}", name, needs),
             Error::NoReturn(name) => write!(f, "'{}' must return a value", name),
             Error::NoValue(name) => write!(f, "'{}' is void and has no value to be used", name),
+            Error::BadIndex { index, length } => {
+                write!(f, "index {} is outside a value of length {}", index, length)
+            },
+            Error::NoMember { ty, name } => write!(f, "{} has no member '{}'", ty, name),
             Error::TooDeep => write!(f, "nested too deeply (over {} KB of stack)", MAX_STACK / 1024),
             Error::AssertFailed(None) => write!(f, "assertion failed"),
             Error::AssertFailed(Some(message)) => write!(f, "assertion failed: {}", message),
@@ -299,19 +310,21 @@ enum Token<'a> {
     ShiftRight,         // >>
     Str(&'a str),       // "Ribbit"
     Dot,                // .
-    Interp(&'a str)     // $"x = {x}"
+    Interp(&'a str),    // $"x = {x}"
+    Char(&'a str),      // 'R'
+    LeftBracket,        // [
+    RightBracket,       // ]
 }
 
 // Finds and returns the position of the " that ends a string.
-fn closing_quote<'a>(chars: &mut Peekable<CharIndices<'_>>) -> Result<usize, Error<'a>> {
+fn closing_quote<'a>(chars: &mut Peekable<CharIndices<'_>>, quote: char) -> Result<usize, Error<'a>> {
     loop {
         match chars.next() {
-            Some((end, '"')) => return Ok(end),
-            Some((_, '\\')) => {
-                chars.next();
-            },
+            Some((end, c)) if c == quote => return Ok(end),
+            Some((_, '\\')) => { chars.next(); },
             Some(_) => {},
-            None => return Err(Error::Syntax("missing a closing \""))
+            None if quote == '"' => return Err(Error::Syntax("missing a closing \"")),
+            None => return Err(Error::Syntax("missing a closing '")),
         }
     }
 }
@@ -345,12 +358,18 @@ fn tokenize<'a>(
             '}' => Token::RightBrace,
             ',' => Token::Comma,
             '.' => Token::Dot,
+            '[' => LeftBracket,
+            ']' => RightBracket,
             '"' => {
-                let end = closing_quote(&mut chars).map_err(|error| (error, start))?;
+                let end = closing_quote(&mut chars, '"').map_err(|error| (error, start))?;
                 Token::Str(&text[start + 1..end])
             },
+            '\'' => {
+                let end = closing_quote(&mut chars, '\'').map_err(|error| (error, start))?;
+                Token::Char(&text[start + 1..end])
+            },
             '$' if chars.next_if(|&(_, d)| d == '"').is_some() => {
-                let end = closing_quote(&mut chars).map_err(|error| (error, start))?;
+                let end = closing_quote(&mut chars, '"').map_err(|error| (error, start))?;
                 Token::Interp(&text[start + 2..end])
             },
             '&' if chars.next_if(|&(_, d)| d == '&').is_some() => Token::AndAnd,
@@ -437,6 +456,7 @@ fn tokenize<'a>(
                     "const" => Token::Const,
                     "Int64" => Token::Type(Type::Int64),
                     "Boolean" => Token::Type(Type::Boolean),
+                    "Char" => Token::Type(Type::Char),
                     "String" => Token::Type(Type::String),
                     "return" => Token::Return,
                     "Void" => Token::Void,
@@ -531,16 +551,18 @@ fn infix(token: Token<'_>) -> Option<(u8, Infix)> {
 
 enum Expr<'a> {
     Literal(Value),
-    Variable(&'a str),
-    Negate(Box<Expr<'a>>),
-    Not(Box<Expr<'a>>),
-    BitNot(Box<Expr<'a>>),
-    Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),
-    And(Box<Expr<'a>>, Box<Expr<'a>>),
-    Or(Box<Expr<'a>>, Box<Expr<'a>>),
-    Call(&'a str, Vec<Expr<'a>>),
-    BuiltIn(BuiltIn, Vec<Expr<'a>>),
-    Hex(Box<Expr<'a>>, bool, u8),
+    Variable(&'a str),                          // x
+    Negate(Box<Expr<'a>>),                      // !
+    Not(Box<Expr<'a>>),                         //
+    BitNot(Box<Expr<'a>>),                      //
+    Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),   // <</>>
+    And(Box<Expr<'a>>, Box<Expr<'a>>),          // &&
+    Or(Box<Expr<'a>>, Box<Expr<'a>>),           // ||
+    Call(&'a str, Vec<Expr<'a>>),               // F()
+    BuiltIn(BuiltIn, Vec<Expr<'a>>),            // e.g. Console.WriteLine(expr)
+    Hex(Box<Expr<'a>>, bool, u8),               // 0xXX
+    Index(Box<Expr<'a>>, Box<Expr<'a>>),        // x[i]
+    Member(Box<Expr<'a>>, &'a str),             // x.Length
 }
 
 #[derive(Copy, Clone)]
@@ -602,13 +624,24 @@ fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
 }
 
 // A table outlining the valid string-escape patterns.
-fn escaped<'a>(c: Option<char>) -> Result<char, Error<'a>> {
-    match c {
+fn escaped<'a>(chars: &mut impl Iterator<Item = char>) -> Result<char, Error<'a>> {
+    match chars.next() {
         Some('n') => Ok('\n'),
         Some('t') => Ok('\t'),
         Some('\\') => Ok('\\'),
         Some('"') => Ok('"'),
+        Some('\'') => Ok('\''),
         Some('0') => Ok('\0'),
+        Some('x') => {
+            let digits = [chars.next(), chars.next()].map(|d| d.and_then(|d| d.to_digit(16)));
+            let [Some(high), Some(low)] = digits else {
+                return Err(Error::Syntax("'\\x' needs two hex digits"));
+            };
+            match high * 16 + low {
+                code @ 0x00..=0x7F => Ok(code as u8 as char),
+                _ => Err(Error::Syntax("only supports '\\x00' to '\\x7F'")),
+            }
+        },
         _ => Err(Error::Syntax("unknown escape sequence")),
     }
 }
@@ -618,9 +651,18 @@ fn unescape<'a>(raw: &str) -> Result<Rc<String>, Error<'a>> {
     let mut text = String::new();
     let mut chars = raw.chars();
     while let Some(c) = chars.next() {
-        text.push(if c == '\\' { escaped(chars.next())? } else { c });
+        text.push(if c == '\\' { escaped(&mut chars)? } else { c });
     }
     Ok(Rc::new(text))
+}
+
+// A character literal, possibly escaped.
+#[inline(never)]
+fn character<'a>(raw: &str) -> Result<Expr<'a>, Error<'a>> {
+    match unescape(raw)?.as_bytes() {
+        [byte] => Ok(Expr::Literal(Value::Char(*byte))),
+        _ => Err(Error::Syntax("a Char may only hold one character")),
+    }
 }
 
 // Interpolation shorthand helper
@@ -654,7 +696,7 @@ fn interpolation<'a>(raw: &'a str, stack_start: usize) -> Result<Expr<'a>, Error
                 joined = join(joined, hole(&raw[start + 1..end], stack_start)?);
             },
             '}' => return Err(Error::Syntax("missing opening '{' for string interpolation. escape brackets with '}}'")),
-            '\\' => text.push(escaped(chars.next().map(|(_, d)| d))?),
+            '\\' => text.push(escaped(&mut chars.by_ref().map(|(_, d)| d))?),
             c => text.push(c),
         }
     }
@@ -1016,7 +1058,41 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             return Ok(Expr::BitNot(Box::new(self.unary()?)));
         }
-        self.primary()
+        let expr = self.primary()?;
+        self.postfix(expr)
+    }
+
+    #[inline(never)]
+    fn postfix(&mut self, mut expr: Expr<'a>) -> Result<Expr<'a>, Error<'a>> {
+        loop {
+            match self.peek() {
+                Some(Token::LeftBracket) => {
+                    self.pos += 1;
+                    let index = self.expression()?;
+                    self.expect(Token::RightBracket, "expected ']'")?;
+                    expr = Expr::Index(Box::new(expr), Box::new(index));
+                },
+                Some(Token::Dot) => {
+                    self.pos += 1;
+                    let Some(Token::Name(name)) = self.next() else {
+                        return Err(Error::Syntax("expected a name after '.'"));
+                    };
+                    expr = Expr::Member(Box::new(expr), name);
+                },
+                _ => return Ok(expr),
+            }
+        }
+    }
+
+    // Determines whether the identifier following a '.' calls a builtin.
+    #[inline(never)]
+    fn builtin_follows(&self, namespace: &str) -> bool {
+        match (self.peek_at(0), self.peek_at(1), self.peek_at(2)) {
+            (Some(Token::Dot), Some(Token::Name(name)), next) => {
+                next == Some(Token::LeftParen) || BuiltIn::find(namespace, name).is_some()
+            },
+            _ => false,
+        }
     }
 
     fn primary(&mut self) -> Result<Expr<'a>, Error<'a>> {
@@ -1024,12 +1100,13 @@ impl<'a> Parser<'a> {
             Some(Token::Number(n)) => Ok(Expr::Literal(Value::Int64(n))),
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
+            Some(Token::Char(raw)) => character(raw),
             Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
             Some(Token::Interp(raw)) => interpolation(raw, self.stack_start),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
                 Ok(Expr::Call(name, self.arguments()?))
             },
-            Some(Token::Name(namespace)) if self.peek() == Some(Token::Dot) => {
+            Some(Token::Name(namespace)) if self.builtin_follows(namespace) => {
                 self.pos += 1;
                 let Some(Token::Name(name)) = self.next() else {
                     return Err(Error::Syntax("expected a name after '.'"));
@@ -1105,6 +1182,11 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
                 (Op::BitAnd, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a & b)),
                 (Op::BitOr, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a | b)),
                 (Op::BitXor, Value::Boolean(a), Value::Boolean(b)) => return Ok(Value::Boolean(a ^ b)),
+                (
+                    Op::Equal | Op::NotEqual | Op::Less | Op::LessEqual | Op::Greater | Op::GreaterEqual,
+                    Value::Char(a),
+                    Value::Char(b),
+                ) => (a as i64, b as i64),
                 (Op::Equal, Value::String(a), Value::String(b)) => return Ok(Value::Boolean(a == b)),
                 (Op::NotEqual, Value::String(a), Value::String(b)) => return Ok(Value::Boolean(a != b)),
                 (Op::Add, a @ Value::String(_), b) | (Op::Add, a, b @ Value::String(_)) => {
@@ -1144,6 +1226,30 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
             call_builtin(*builtin, args, vars)?.ok_or(Error::NoValue(builtin.name()))
         },
         Expr::Hex(inner, upper, width) => Ok(hex(eval(inner, vars)?.int64("hex")?, *upper, *width)),
+        Expr::Index(text, index) => char_at(text, index, vars),
+        Expr::Member(value, name) => member(value, name, vars),
+    }
+}
+
+// The Char at a given string index (`s[i]`).
+#[inline(never)]
+fn char_at<'a>(text: &Expr<'a>, index: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
+    let text = eval(text, vars)?;
+    let index = eval(index, vars)?.int64("an index")?;
+    let Value::String(s) = text else {
+        return Err(Error::WrongType {place: "'[]'", wanted: "String", found: text.type_name() });
+    };
+    match usize::try_from(index).ok().and_then(|i| s.as_bytes().get(i)) {
+        Some(&byte) => Ok(Value::Char(byte)),
+        None => Err(Error::BadIndex { index, length: s.len() }),
+    }
+}
+
+#[inline(never)]
+fn member<'a>(value: &Expr<'a>, name: &'a str, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
+    match (eval(value, vars)?, name) {
+        (Value::String(s), "Length") => Ok(Value::Int64(s.len() as i64)),
+        (value, name) => Err(Error::NoMember { ty: value.type_name(), name }),
     }
 }
 

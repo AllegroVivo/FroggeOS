@@ -42,7 +42,8 @@ impl fmt::Write for Serial {
                     send(b' ');
                     send(0x08);
                 },
-                _ => send(byte),
+                0x20..=0x7E | b'\t' => send(byte),
+                _ => send(b'?'),
             }
         }
         Ok(())
