@@ -1,3 +1,5 @@
+param([switch]$SelfTest)
+
 Set-Location $PSScriptRoot
 
 $kernelSectors = 512     # must match KERNEL SECTORS in boot/stage2.asm
@@ -8,7 +10,11 @@ nasm -f bin boot/stage2.asm -o stage2.bin
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Push-Location kernel
-cargo build
+if ($SelfTest) {
+    cargo build --features selftest
+} else {
+    cargo build
+}
 $cargoResult = $LASTEXITCODE
 Pop-Location
 if ($cargoResult -ne 0) { exit 1 }
@@ -30,4 +36,15 @@ $image = New-Object byte[] 1474560
 [Array]::Copy($kernel, 0, $image, 5 * 512,  $kernel.Length) # sectors 5+
 [System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $image)
 
-qemu-system-x86_64 -drive file=disk.img,format=raw,if=floppy -rtc base=localtime -audiodev dsound,id=snd0 -machine pcspk-audiodev=snd0 -serial stdio
+if ($SelfTest) {
+    qemu-system-x86_64 -drive file=disk.img,format=raw,if=floppy -rtc base=localtime -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
+    # QEMU exits with the value the kernel wrote times 2 plus 1.
+    if ($LASTEXITCODE -ne 33) {
+        Write-Error "selftest failed (QEMU exit code $LASTEXITCODE)"
+        exit 1
+    }
+    "selftest passed"
+    exit 0
+} else {
+    qemu-system-x86_64 -drive file=disk.img,format=raw,if=floppy -rtc base=localtime -audiodev dsound,id=snd0 -machine pcspk-audiodev=snd0 -serial stdio
+}

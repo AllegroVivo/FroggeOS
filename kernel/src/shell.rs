@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::calc;
-use crate::{heap, keyboard, rtc, speaker, timer, vga};
+use crate::{heap, keyboard, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -154,7 +154,7 @@ fn redraw(rest: &[u8], blanks: usize) {
     vga::cursor_left(rest.len() + blanks);
 }
 
-struct Kernel;
+pub struct Kernel;
 
 impl calc::Host for Kernel {
     fn write(&mut self, text: &str) {
@@ -199,6 +199,7 @@ fn run_command(
             println!("beep         play a tone: beep [hz] [ms], 440 Hz for 200 ms by default");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
+            println!("selftest     check that the kernel's parts still work");
             println!("vars         list the stored variables");
             println!("lang         view a list of the current language features for Ribbit")
         },
@@ -238,6 +239,9 @@ fn run_command(
                 in_use, allocations, reusable
             );
         },
+        "selftest" => {
+            selftest::run();
+        }
         "vars" => {
             for (name, variable) in vars.iter() {
                 let constant = if variable.constant { "const " } else { "" };

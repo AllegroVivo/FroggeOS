@@ -12,6 +12,7 @@ mod paging;
 mod pic;
 mod port;
 mod rtc;
+mod selftest;
 mod serial;
 mod shell;
 mod speaker;
@@ -40,6 +41,9 @@ pub extern "C" fn _start() -> ! {
 
     interrupts::enable();
     println!("Interrupts enabled.");
+
+    #[cfg(feature = "selftest")]
+    selftest::exit_qemu(selftest::run());
 
     shell::run()
 }

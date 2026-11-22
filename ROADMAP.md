@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-21):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker, a PS/2 keyboard with arrow keys, a free-list heap, and a shell whose arrow keys edit the line and recall earlier ones. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 126 KB of its 256 KB budget.
+**Status (2026-11-21):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, exception handlers (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker, a PS/2 keyboard with arrow keys, a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 131 KB of its 256 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -193,7 +193,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **6.9** ☆ A disassembler for the code generator, and a debugger with breakpoints (it uses the existing `int3` handler)
 
 ### 7. Shell, user interface and apps
-- **7.1 Text shell** ✅ (help, clear, echo, uptime, date, beep, history, heap, vars, lang, calculator)
+- **7.1 Text shell** ✅ (help, clear, echo, uptime, date, beep, history, heap, selftest, vars, lang, calculator)
   - 7.1.1 Line editing: move the cursor left and right, insert mid-line, Delete (needs 3.1.3) ✅
   - 7.1.2 Up and down arrows recall history ✅
   - 7.1.3 Tab completion
@@ -226,7 +226,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 ### 8. Tooling and testing (cuts across every area; do the first three early)
 - **8.1** Serial logging (this is 2.1.2) ✅
 - **8.2** Host-side unit tests: move pure logic (language, heap algorithm, filesystem format) into `no_std` library crates and test them with `cargo test` on Windows
-- **8.3** In-kernel self-tests: a `selftest` command that prints PASS or FAIL over serial, then closes QEMU with a status code through the `isa-debug-exit` device. This automates the boot checks now done by hand. Rust's built-in custom test framework needs nightly Rust, but this approach works on stable.
+- **8.3** In-kernel self-tests: a `selftest` command that prints PASS or FAIL over serial, then closes QEMU with a status code through the `isa-debug-exit` device. This automates the boot checks now done by hand. Rust's built-in custom test framework needs nightly Rust, but this approach works on stable. ✅
 - **8.4** Debugging with GDB: QEMU `-s -S`, plus keeping the ELF file next to the flat binary so GDB has symbols
 - **8.5** ☆ Replace build.ps1 with a Rust `xtask` build tool
 - **8.6** ~~Merge `first-boot` into `main` at each milestone~~ No longer needed: `first-boot` became `main` when the project went on GitHub ✅

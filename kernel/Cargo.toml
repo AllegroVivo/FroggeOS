@@ -12,3 +12,6 @@ panic = "abort"
 
 [dependencies]
 ribbit = { path = "../ribbit" }
+
+[features]
+selftest = []
