@@ -118,6 +118,14 @@ pub fn run() -> ! {
                 len = replace_line(&mut line, pos, len, text);
                 pos = len;
             },
+            Key::Ctrl('c') => {
+                println!("{}^C", core::str::from_utf8(&line[pos..len]).unwrap());
+                len = 0;
+                pos = 0;
+                back = 0;
+                pending.clear();
+                print!("> ");
+            },
             _ => {}
         }
     }
@@ -175,6 +183,10 @@ impl calc::Host for Kernel {
 
     fn sleep(&mut self, ms: u64) {
         timer::sleep(ms);
+    }
+
+    fn cancelled(&mut self) -> bool {
+        keyboard::take_ctrl_c()
     }
 }
 

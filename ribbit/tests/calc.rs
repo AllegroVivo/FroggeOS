@@ -1,11 +1,15 @@
 use ribbit::calc::{Functions, Host, Variables, evaluate, is_complete};
 
 // Stands in for the kernel: keeps what Ribbit writes, notes each beep
-// as [beep hz ms], and has a clock that says 1234 ms plus however long
-// the line has slept.
+// as [beep hz ms], has a clock that says 1234 ms plus however long
+// the line has slept, and presses Ctrl+C the `cancel_at`-th time
+// Ribbit asks (never, if it's 0).
+#[derive(Default)]
 struct TestHost {
     output: String,
     slept: i64,
+    cancel_at: u64,
+    asked: u64,
 }
 
 impl Host for TestHost {
@@ -28,22 +32,32 @@ impl Host for TestHost {
     fn sleep(&mut self, ms: u64) {
         self.slept += ms as i64;
     }
+
+    fn cancelled(&mut self) -> bool {
+        self.asked += 1;
+        self.asked == self.cancel_at
+    }
+}
+
+// What the shell would print after one line: anything the line wrote,
+// then its value or error. Ctrl+C is pressed as TestHost describes.
+fn shell_output(line: &str, vars: &mut Variables, functions: &mut Functions, cancel_at: u64) -> String {
+    let mut host = TestHost { cancel_at, ..TestHost::default() };
+    let printed = match evaluate(line, vars, functions, &mut host) {
+        Ok(Some(value)) => value.to_string(),
+        Ok(None) => String::new(),
+        Err(failure) => format!("Error: {}", failure.error),
+    };
+    host.output + &printed
 }
 
 // Types the lines into one shell session and checks what the
-// shell would print after each one: anything the line wrote,
-// then its value or error.
+// shell would print after each one.
 fn check(session: &[(&str, &str)]) {
     let mut vars = Variables::new();
     let mut functions = Functions::new();
     for &(line, expected) in session {
-        let mut host = TestHost { output: String::new(), slept: 0 };
-        let printed = match evaluate(line, &mut vars, &mut functions, &mut host) {
-            Ok(Some(value)) => value.to_string(),
-            Ok(None) => String::new(),
-            Err(failure) => format!("Error: {}", failure.error),
-        };
-        assert_eq!(host.output + &printed, expected, "after typing: {}", line);
+        assert_eq!(shell_output(line, &mut vars, &mut functions, 0), expected, "after typing: {}", line);
     }
 }
 
@@ -597,6 +611,29 @@ fn speaker_and_sleep() {
 }
 
 #[test]
+fn ctrl_c() {
+    let mut vars = Variables::new();
+    let mut functions = Functions::new();
+    let mut run = |line: &str, cancel_at: u64| shell_output(line, &mut vars, &mut functions, cancel_at);
+    // A loop asks at the start of every round, so Ctrl+C on the fifth
+    // ask stops it after four rounds, and the line's work so far stays.
+    assert_eq!(run("Int64 n = 0;", 0), "0");
+    assert_eq!(run("while (true) { n++; }", 5), "Error: keyboard interrupt (Ctrl+C) pressed");
+    assert_eq!(run("n;", 0), "4");
+    // Every kind of loop asks, even one that only sleeps.
+    assert_eq!(run("do { Timer.Sleep(100); } while (true);", 3), "Error: keyboard interrupt (Ctrl+C) pressed");
+    assert_eq!(run("for (Int64 i = 0; i < 10; i++) { }", 10), "Error: keyboard interrupt (Ctrl+C) pressed");
+    assert_eq!(run("for (Int64 i = 0; i < 10; i++) { }", 11), ""); // done before the 11th ask
+    // So does every function call, which stops a long recursion. (Fib(20)
+    // makes 21,891 calls but is only 20 deep, well inside the stack limit.)
+    assert_eq!(run("Int64 Fib(Int64 n) { if (n < 2) { return n; } return Fib(n - 1) + Fib(n - 2); }", 0), "");
+    assert_eq!(run("Fib(20);", 1000), "Error: keyboard interrupt (Ctrl+C) pressed");
+    assert_eq!(run("Fib(10);", 0), "55");
+    // A line with no loops or calls never asks.
+    assert_eq!(run("6 * 7;", 1), "42");
+}
+
+#[test]
 fn interpolation() {
     check(&[
         ("Int64 x = 42;", "42"),
@@ -776,7 +813,7 @@ fn function_errors() {
 // The text before the spot that its mistake points to. None means the
 // mistake has no place, because it only showed up while running.
 fn before_mistake(text: &str) -> Option<&str> {
-    let mut host = TestHost { output: String::new(), slept: 0 };
+    let mut host = TestHost::default();
     let failure = evaluate(text, &mut Variables::new(), &mut Functions::new(), &mut host).err()?;
     failure.at.map(|at| &text[..at])
 }

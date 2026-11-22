@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-22):** milestone 0 is done, and work on M1 and M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker, a PS/2 keyboard with arrow keys, a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 132 KB of its 256 KB budget.
+**Status (2026-11-22):** milestones 0 and 1 are done, and work on M2 has started. FroggeOS boots through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker, a PS/2 keyboard with arrow keys, Caps Lock, Ctrl and Alt (Ctrl+C throws away a typed line or stops running code), a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 133 KB of its 256 KB budget.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -92,7 +92,7 @@
 ### 3. Device drivers
 - **3.1 Keyboard**
   - 3.1.1 IRQ 1, scancode ring buffer, US layout, Shift ✅
-  - 3.1.2 Caps Lock, Ctrl and Alt (Ctrl+C to cancel)
+  - 3.1.2 Caps Lock, Ctrl and Alt (Ctrl+C to cancel) ✅
   - 3.1.3 Extended scancodes (the 0xE0 prefix): arrows, Home/End, Delete, PgUp/PgDn ✅
   - 3.1.4 Key events (press, release, modifiers) as well as characters. Games and the editor need these.
   - 3.1.5 ☆ Keyboard LEDs
@@ -240,7 +240,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 | # | Milestone | Steps | The demo when it's done |
 |---|---|---|---|
 | M0 ✅ | Boot to a shell | 1.1, 1.2, 2.1.1, 2.3.1–2, 2.4.1, 2.5.1, 3.1.1, 6.0, 7.1 | Where we are |
-| M1 | Solid foundations | 2.1.2 → 8.3 → 2.2.1–2 → 2.3.3 → 3.1.2–3 → 7.1.1–2 → 2.5.3 → 3.3.1 | Edit a line with the arrows, recall history, `date`, a beep. A stack overflow gives a clean report instead of a reboot. |
+| M1 ✅ | Solid foundations | 2.1.2 → 8.3 → 2.2.1–2 → 2.3.3 → 3.1.2–3 → 7.1.1–2 → 2.5.3 → 3.3.1 | Edit a line with the arrows, recall history, `date`, a beep. A stack overflow gives a clean report instead of a reboot. |
 | M2 | Language v1 | 6.1 → 6.2 → 6.3 → 6.4 → 6.5 | Define a recursive `Fib()` at the prompt and call it |
 | M3 | Know the machine | 1.3 → 1.5 → 2.4.2–5 → 2.4.7 → 1.4 when needed | `mem` shows the real RAM, and the heap uses all of it |
 | M4 | Files and scripts | 3.6.4 → 3.6.1–3 → 5.1–5.6 → 6.6 → 7.2 | Write a program in the editor, save it, reboot, and run it |

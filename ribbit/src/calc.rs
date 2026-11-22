@@ -111,6 +111,7 @@ pub trait Host {
     fn uptime_ms(&self) -> i64;
     fn beep(&mut self, hz: u32, ms: u64);
     fn sleep(&mut self, ms: u64);
+    fn cancelled(&mut self) -> bool;
 }
 
 // Variables seen by the currently executing code.
@@ -174,7 +175,8 @@ pub enum Error<'a> {
     DivideByZero,
     Overflow,                   // a number or result is too big for an i64
     UnknownName(&'a str),       // a name with no value stored under it
-    LoopLimit,                  // a loop repeated ``MAX_LOOP_ROUNDS`` times
+    LoopLimit,                  // a loop repeated `MAX_LOOP_ROUNDS` times
+    Cancelled,                  // program terminated by the host
     // A value of the wrong type.
     WrongType { place: &'static str, wanted: &'static str, found: &'static str},
     Undeclared(&'a str),        // assigning to a name that was not declared
@@ -204,6 +206,7 @@ impl fmt::Display for Error<'_> {
             Error::Overflow => write!(f, "number too big"),
             Error::UnknownName(name) => write!(f, "'{}' is not a command or variable", name),
             Error::LoopLimit => write!(f, "loop stopped after {} rounds", MAX_LOOP_ROUNDS),
+            Error::Cancelled => write!(f, "keyboard interrupt (Ctrl+C) pressed"),
             Error::WrongType { place, wanted, found } => {
                 write!(f, "{} needs {}, not {}", place, wanted, found)
             },
@@ -1203,6 +1206,9 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                     if rounds > MAX_LOOP_ROUNDS {
                         return Err(Error::LoopLimit);
                     }
+                    if vars.host.cancelled() {
+                        return Err(Error::Cancelled);
+                    }
                     match run_block(body, vars)? {
                         Flow::Break => break,
                         Flow::Return(value) => {
@@ -1310,6 +1316,9 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
         return Err(Error::ArgumentCount { name, wanted: function.params.len(), found: args.len() });
     }
     vars.check_stack()?;
+    if vars.host.cancelled() {
+        return Err(Error::Cancelled);
+    }
     let mut locals: Vec<(&'a str, Variable)> = Vec::new();
     for ((param, ty), arg) in function.params.iter().zip(args) {
         let value = eval(arg, vars)?;
