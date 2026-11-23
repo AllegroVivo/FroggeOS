@@ -7,6 +7,9 @@ edition = "2024"
 opt-level = "s"
 panic = "abort"
 
+[profile.dev.package.ribbit]
+codegen-units = 1
+
 [profile.release]
 panic = "abort"
 
