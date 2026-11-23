@@ -132,6 +132,7 @@ struct Env<'a, 'v> {
     stack_start: usize,         // where the stack was when the line began
     statement: usize,           // where the currently executing statement starts
     calls: usize,               // how many function calls deep the line is
+    expression: Option<usize>   // the optional expression that errored
 }
 
 // The most stack a line may use while it reads and runs.
@@ -257,12 +258,6 @@ impl fmt::Display for Error<'_> {
 pub struct Failure<'a> {
     pub error: Error<'a>,
     pub at: Option<usize>,
-}
-
-impl<'a> From<Error<'a>> for Failure<'a> {
-    fn from(error: Error<'a>) -> Self {
-        Failure { error, at: None }
-    }
 }
 
 // ``derive`` instructs the compiler to write these traits automatically.
@@ -560,18 +555,29 @@ fn infix(token: Token<'_>) -> Option<(u8, Infix)> {
 
 enum Expr<'a> {
     Literal(Value),
-    Variable(&'a str),                          // x
-    Negate(Box<Expr<'a>>),                      // !
-    Not(Box<Expr<'a>>),                         //
-    BitNot(Box<Expr<'a>>),                      //
-    Binary(Op, Box<Expr<'a>>, Box<Expr<'a>>),   // <</>>
-    And(Box<Expr<'a>>, Box<Expr<'a>>),          // &&
-    Or(Box<Expr<'a>>, Box<Expr<'a>>),           // ||
-    Call(&'a str, Vec<Expr<'a>>),               // F()
-    BuiltIn(BuiltIn, Vec<Expr<'a>>),            // e.g. Console.WriteLine(expr)
-    Hex(Box<Expr<'a>>, bool, u8),               // 0xXX
-    Index(Box<Expr<'a>>, Box<Expr<'a>>),        // x[i]
-    Member(Box<Expr<'a>>, &'a str),             // x.Length
+    Variable(usize, &'a str),                           // x
+    Negate(usize, Box<Expr<'a>>),                       // !
+    Not(usize, Box<Expr<'a>>),                          //
+    BitNot(usize, Box<Expr<'a>>),                       //
+    Binary(usize, Op, Box<Expr<'a>>, Box<Expr<'a>>),    // <</>>
+    And(usize, Box<Expr<'a>>, Box<Expr<'a>>),           // &&
+    Or(usize, Box<Expr<'a>>, Box<Expr<'a>>),            // ||
+    Call(usize, &'a str, Vec<Expr<'a>>),                // F()
+    BuiltIn(usize, BuiltIn, Vec<Expr<'a>>),             // e.g. Console.WriteLine(expr)
+    Hex(usize, Box<Expr<'a>>, bool, u8),                // 0xXX
+    Index(usize, Box<Expr<'a>>, Box<Expr<'a>>),         // x[i]
+    Member(usize, Box<Expr<'a>>, &'a str),              // x.Length
+}
+
+impl Expr<'_> {
+    fn at(&self) -> Option<usize> {
+        match self {
+            Expr::Literal(_) => None,
+            Expr::Variable(at, ..) | Expr::Negate(at, ..) | Expr::Not(at, ..) | Expr::BitNot(at, ..)
+            | Expr::Binary(at, ..) | Expr::And(at, ..) | Expr::Or(at, ..) | Expr::Call(at, ..)
+            | Expr::BuiltIn(at, ..) | Expr::Hex(at, ..) | Expr::Index(at, ..) | Expr::Member(at, ..) => Some(*at),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -633,8 +639,8 @@ enum Stmt<'a> {
 
 type Block<'a> = Vec<(usize, Stmt<'a>)>;
 
-fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
-    Stmt::Assign(name, Expr::Binary(op, Box::new(Expr::Variable(name)), Box::new(value)))
+fn shorthand<'a>(at: usize, name: &'a str, op_at: usize, op: Op, value: Expr<'a>) -> Stmt<'a> {
+    Stmt::Assign(name, Expr::Binary(op_at, op, Box::new(Expr::Variable(at, name)), Box::new(value)))
 }
 
 // A table outlining the valid string-escape patterns.
@@ -680,14 +686,14 @@ fn character<'a>(raw: &str) -> Result<Expr<'a>, Error<'a>> {
 }
 
 // Interpolation shorthand helper
-fn join<'a>(a: Expr<'a>, b: Expr<'a>) -> Expr<'a> {
-    Expr::Binary(Op::Add, Box::new(a), Box::new(b))
+fn join<'a>(at: usize, a: Expr<'a>, b: Expr<'a>) -> Expr<'a> {
+    Expr::Binary(at, Op::Add, Box::new(a), Box::new(b))
 }
 
 // Functionally breaks string interpolations ($"x = {x}!") into their components.
 #[inline(never)]
 #[allow(clippy::needless_lifetimes)]
-fn interpolation<'a>(raw: &'a str, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
+fn interpolation<'a>(raw: &'a str, at: usize, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
     let mut joined = Expr::Literal(Value::String(Rc::new(String::new())));
     let mut text = String::new();
     let mut chars = raw.char_indices().peekable();
@@ -705,9 +711,9 @@ fn interpolation<'a>(raw: &'a str, stack_start: usize) -> Result<Expr<'a>, Error
                 };
                 if !text.is_empty() {
                     let piece = core::mem::take(&mut text);
-                    joined = join(joined, Expr::Literal(Value::String(Rc::new(piece))));
+                    joined = join(at, joined, Expr::Literal(Value::String(Rc::new(piece))));
                 }
-                joined = join(joined, hole(&raw[start + 1..end], stack_start)?);
+                joined = join(at, joined, hole(&raw[start + 1..end], at + start + 1, stack_start)?);
             },
             '}' => return Err(Error::Syntax("missing opening '{' for string interpolation. escape brackets with '}}'")),
             '\\' => text.push(escaped(&mut chars.by_ref().map(|(_, d)| d))?),
@@ -715,19 +721,20 @@ fn interpolation<'a>(raw: &'a str, stack_start: usize) -> Result<Expr<'a>, Error
         }
     }
     if !text.is_empty() {
-        joined = join(joined, Expr::Literal(Value::String(Rc::new(text))));
+        joined = join(at, joined, Expr::Literal(Value::String(Rc::new(text))));
     }
     Ok(joined)
 }
 
 // A single interpolate {hole} in a string.
 #[allow(clippy::needless_lifetimes)]
-fn hole<'a>(inside: &'a str, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
+fn hole<'a>(inside: &'a str, at: usize, stack_start: usize) -> Result<Expr<'a>, Error<'a>> {
     let (code, format) = match inside.split_once(':') {
         Some((code, format)) => (code, Some(format)),
         None => (inside, None),
     };
     let (tokens, spans) = tokenize(code).map_err(|(error, _)| error)?;
+    let spans = spans.into_iter().map(|(start, end)| (start + at, end + at)).collect();
     let mut parser = Parser::new(tokens, spans, stack_start);
     let value = parser.expression()?;
     if parser.pos < parser.tokens.len() {
@@ -746,7 +753,7 @@ fn hole<'a>(inside: &'a str, stack_start: usize) -> Result<Expr<'a>, Error<'a>> 
         "" => 0,
         digits => digits.parse::<u8>().map_err(|_| bad)?,
     };
-    Ok(Expr::Hex(Box::new(value), upper, width))
+    Ok(Expr::Hex(at, Box::new(value), upper, width))
 }
 
 // Number `n` in hex, displayed in `width` digits.
@@ -851,7 +858,7 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> Result<Stmt<'a>, Error<'a>> {
         self.check_stack()?;
-        // Look at the next two tokens. ``=`` starts an assignment, ``==`` does not.
+        // Look at the next two tokens. `=` starts an assignment.
         match (self.peek(), self.tokens.get(self.pos + 1).copied()) {
             (Some(Token::If), _) => {
                 self.pos += 1;
@@ -933,13 +940,15 @@ impl<'a> Parser<'a> {
                 Ok(Stmt::Assign(name, self.expression()?))
             },
             (Some(Token::Name(name)), Some(Token::Compound(op))) => {
+                let (at, op_at) = (self.here(), self.spans[self.pos + 1].0);
                 self.pos += 2;
-                Ok(shorthand(name, op, self.expression()?))
+                Ok(shorthand(at, name, op_at, op, self.expression()?))
             },
             (Some(Token::Name(name)), Some(token @ (Token::PlusPlus | Token::MinusMinus))) => {
+                let (at, op_at) = (self.here(), self.spans[self.pos + 1].0);
                 self.pos += 2;
                 let op = if token == Token::PlusPlus { Op::Add } else { Op::Subtract };
-                Ok(shorthand(name, op, Expr::Literal(Value::Int64(1))))
+                Ok(shorthand(at, name, op_at, op, Expr::Literal(Value::Int64(1))))
             },
             _ => Ok(Stmt::Expr(self.expression()?))
         }
@@ -1051,14 +1060,15 @@ impl<'a> Parser<'a> {
             if precedence < min {
                 break;
             }
+            let at = self.here();
             self.pos += 1;
             // Right side only takes operators that bind tighter.
             let right = self.binary(precedence + 1)?;
             let (left_side, right) = (Box::new(left), Box::new(right));
             left = match infix {
-                Infix::Op(op) => Expr::Binary(op, left_side, right),
-                Infix::And => Expr::And(left_side, right),
-                Infix::Or => Expr::Or(left_side, right),
+                Infix::Op(op) => Expr::Binary(at, op, left_side, right),
+                Infix::And => Expr::And(at, left_side, right),
+                Infix::Or => Expr::Or(at, left_side, right),
             };
         }
         Ok(left)
@@ -1066,17 +1076,18 @@ impl<'a> Parser<'a> {
 
     fn unary(&mut self) -> Result<Expr<'a>, Error<'a>> {
         self.check_stack()?;
+        let at = self.here();
         if self.peek() == Some(Token::Minus) {
             self.pos += 1;
-            return Ok(Expr::Negate(Box::new(self.unary()?)));
+            return Ok(Expr::Negate(at, Box::new(self.unary()?)));
         }
         if self.peek() == Some(Token::Bang) {
             self.pos += 1;
-            return Ok(Expr::Not(Box::new(self.unary()?)));
+            return Ok(Expr::Not(at, Box::new(self.unary()?)));
         }
         if self.peek() == Some(Token::Tilde) {
             self.pos += 1;
-            return Ok(Expr::BitNot(Box::new(self.unary()?)));
+            return Ok(Expr::BitNot(at, Box::new(self.unary()?)));
         }
         let expr = self.primary()?;
         self.postfix(expr)
@@ -1087,17 +1098,19 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek() {
                 Some(Token::LeftBracket) => {
+                    let at = self.here();
                     self.pos += 1;
                     let index = self.expression()?;
                     self.expect(Token::RightBracket, "expected ']'")?;
-                    expr = Expr::Index(Box::new(expr), Box::new(index));
+                    expr = Expr::Index(at, Box::new(expr), Box::new(index));
                 },
                 Some(Token::Dot) => {
                     self.pos += 1;
+                    let at = self.here();
                     let Some(Token::Name(name)) = self.next() else {
                         return Err(Error::Syntax("expected a name after '.'"));
                     };
-                    expr = Expr::Member(Box::new(expr), name);
+                    expr = Expr::Member(at, Box::new(expr), name);
                 },
                 _ => return Ok(expr),
             }
@@ -1116,15 +1129,16 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> Result<Expr<'a>, Error<'a>> {
+        let at = self.here();
         match self.next() {
             Some(Token::Number(n)) => Ok(Expr::Literal(Value::Int64(n))),
             Some(Token::True) => Ok(Expr::Literal(Value::Boolean(true))),
             Some(Token::False) => Ok(Expr::Literal(Value::Boolean(false))),
             Some(Token::Char(raw)) => character(raw),
             Some(Token::Str(raw)) => Ok(Expr::Literal(Value::String(unescape(raw)?))),
-            Some(Token::Interp(raw)) => interpolation(raw, self.stack_start),
+            Some(Token::Interp(raw)) => interpolation(raw, at + 2, self.stack_start),
             Some(Token::Name(name)) if self.peek() == Some(Token::LeftParen) => {
-                Ok(Expr::Call(name, self.arguments()?))
+                Ok(Expr::Call(at, name, self.arguments()?))
             },
             Some(Token::Name(namespace)) if self.builtin_follows(namespace) => {
                 self.pos += 1;
@@ -1134,12 +1148,12 @@ impl<'a> Parser<'a> {
                 let Some(builtin) = BuiltIn::find(namespace, name) else {
                     return Err(Error::UnknownBuiltIn(namespace, name));
                 };
-                Ok(Expr::BuiltIn(builtin, self.arguments()?))
+                Ok(Expr::BuiltIn(at, builtin, self.arguments()?))
             },
             Some(Token::Name(_)) if matches!(self.peek(), Some(Token::PlusPlus | Token::MinusMinus)) => {
                 Err(Error::Syntax("'++' and '--' only work as a statement"))
             },
-            Some(Token::Name(name)) => Ok(Expr::Variable(name)),
+            Some(Token::Name(name)) => Ok(Expr::Variable(at, name)),
             Some(Token::LeftParen) => {
                 let inside = self.expression()?;
                 self.expect(Token::RightParen, "expected ')'")?;
@@ -1168,26 +1182,39 @@ impl<'a> Parser<'a> {
     }
 }
 
+// Works out the value of an expression. If an error arises, it also
+// attempts to note the location of the failing expression if it hasn't
+// already been noted.
 fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
+    let value = eval_node(expr, vars);
+    if value.is_err() && vars.calls == 0 {
+        vars.expression = vars.expression.or(expr.at());
+    }
+    value
+}
+
+// The main functionality of `eval()`. Always inlined so the two share a stack frame.
+#[inline(always)]
+fn eval_node<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>> {
     vars.check_stack()?;
     match expr {
         Expr::Literal(value) => Ok(value.clone()),
-        Expr::Variable(name) => {
+        Expr::Variable(_, name) => {
             vars.get(*name).map(|variable| variable.value.clone()).ok_or(Error::UnknownName(name))
         },
-        Expr::Negate(inner) => {
+        Expr::Negate(_, inner) => {
             let n = eval(inner, vars)?.int64("'-'")?;
             n.checked_neg().map(Value::Int64).ok_or(Error::Overflow)
         },
-        Expr::Not(inner) => Ok(Value::Boolean(!eval(inner, vars)?.boolean("'!'")?)),
-        Expr::BitNot(inner) => Ok(Value::Int64(!eval(inner, vars)?.int64("'~'")?)),
-        Expr::And(left, right) => Ok(Value::Boolean(
+        Expr::Not(_, inner) => Ok(Value::Boolean(!eval(inner, vars)?.boolean("'!'")?)),
+        Expr::BitNot(_, inner) => Ok(Value::Int64(!eval(inner, vars)?.int64("'~'")?)),
+        Expr::And(_, left, right) => Ok(Value::Boolean(
             eval(left, vars)?.boolean("'&&'")? && eval(right, vars)?.boolean("'&&'")?,
         )),
-        Expr::Or(left, right) => Ok(Value::Boolean(
+        Expr::Or(_, left, right) => Ok(Value::Boolean(
             eval(left, vars)?.boolean("'||'")? || eval(right, vars)?.boolean("'||'")?,
         )),
-        Expr::Binary(op, left, right) => {
+        Expr::Binary(_, op, left, right) => {
             let a = eval(left, vars)?;
             let b = eval(right, vars)?;
             let place = op.symbol();
@@ -1241,13 +1268,13 @@ fn eval<'a>(expr: &Expr<'a>, vars: &mut Env<'a, '_>) -> Result<Value, Error<'a>>
             };
             result.ok_or(Error::Overflow)
         },
-        Expr::Call(name, args) => call(name, args, vars)?.ok_or(Error::NoValue(name)),
-        Expr::BuiltIn(builtin, args) => {
+        Expr::Call(_, name, args) => call(name, args, vars)?.ok_or(Error::NoValue(name)),
+        Expr::BuiltIn(_, builtin, args) => {
             call_builtin(*builtin, args, vars)?.ok_or(Error::NoValue(builtin.name()))
         },
-        Expr::Hex(inner, upper, width) => Ok(hex(eval(inner, vars)?.int64("hex")?, *upper, *width)),
-        Expr::Index(text, index) => char_at(text, index, vars),
-        Expr::Member(value, name) => member(value, name, vars),
+        Expr::Hex(_, inner, upper, width) => Ok(hex(eval(inner, vars)?.int64("hex")?, *upper, *width)),
+        Expr::Index(_, text, index) => char_at(text, index, vars),
+        Expr::Member(_, value, name) => member(value, name, vars),
     }
 }
 
@@ -1289,8 +1316,8 @@ fn run<'a>(stmts: &[(usize, Stmt<'a>)], vars: &mut Env<'a, '_>) -> Result<Flow, 
     for (at, stmt) in stmts {
         vars.note(*at);
         last = match stmt {
-            Stmt::Expr(Expr::Call(name, args)) => call(name, args, vars)?,
-            Stmt::Expr(Expr::BuiltIn(builtin, args)) => call_builtin(*builtin, args, vars)?,
+            Stmt::Expr(Expr::Call(_, name, args)) => call(name, args, vars)?,
+            Stmt::Expr(Expr::BuiltIn(_, builtin, args)) => call_builtin(*builtin, args, vars)?,
             Stmt::Expr(expr) => Some(eval(expr, vars)?),
             Stmt::Declare {name, ty, value, constant } => {
                 let value = eval(value, vars)?;
@@ -1480,10 +1507,10 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
     }
     let caller = core::mem::replace(&mut vars.locals, locals);
     vars.calls += 1;
-    let flow = run_block(&function.body, vars)?;
+    let flow = run_block(&function.body, vars);
     vars.calls -= 1;
     vars.locals = caller;
-    let value = match flow {
+    let value = match flow? {
         Flow::Return(value) => value,
         Flow::Normal(_) | Flow::Break | Flow::Continue => None,
     };
@@ -1539,8 +1566,11 @@ pub fn evaluate<'a>(
         }
         program = forever;
     }
-    let mut env = Env { globals: vars, functions, host, locals: Vec::new(), depth: 0, stack_start, statement: 0, calls: 0 };
-    let flow = run(&program, &mut env).map_err(|error| Failure { error, at: Some(env.statement) })?;
+    let mut env = Env {
+        globals: vars, functions, host, locals: Vec::new(), depth: 0,
+        stack_start, statement: 0, calls: 0, expression: None
+    };
+    let flow = run(&program, &mut env).map_err(|error| Failure { error, at: Some(env.expression.unwrap_or(env.statement)) })?;
     match flow {
         Flow::Normal(value) | Flow::Return(value) => Ok(value),
         Flow::Break | Flow::Continue => Ok(None),

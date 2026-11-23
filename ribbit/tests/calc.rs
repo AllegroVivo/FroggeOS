@@ -889,7 +889,7 @@ fn function_errors() {
 
 // The text before the spot that a line's mistake points to, after typing
 // the earlier lines, with Ctrl+C pressed as TestHost describes. None means
-// the line had no mistake, or its mistake had no place.
+// the line had no mistake.
 fn before_mistake_after<'a>(earlier: &[&str], text: &'a str, cancel_at: u64) -> Option<&'a str> {
     let (mut vars, mut functions) = (Variables::new(), Functions::new());
     for line in earlier {
@@ -939,41 +939,69 @@ fn error_positions() {
 
 #[test]
 fn running_positions() {
-    // A mistake found while running points at the start of the statement
-    // it happened in...
-    assert_eq!(before_mistake("1 + 10 / 0;"), Some(""));
-    assert_eq!(before_mistake("Int64 a = 1; Int64 b = a / 0;"), Some("Int64 a = 1; "));
+    // A mistake found while running points at the operator that went wrong...
+    assert_eq!(before_mistake("1 + 10 / 0;"), Some("1 + 10 "));
+    assert_eq!(before_mistake("Int64 a = 1; Int64 b = a / 0;"), Some("Int64 a = 1; Int64 b = a "));
+    assert_eq!(before_mistake("9223372036854775807 + 1;"), Some("9223372036854775807 "));
+    assert_eq!(before_mistake("Int64 m = -9223372036854775807 - 1; 1 + -m;"), Some("Int64 m = -9223372036854775807 - 1; 1 + "));
+    assert_eq!(before_mistake("true && !5;"), Some("true && "));
+    assert_eq!(before_mistake("1 + ~true;"), Some("1 + "));
+    assert_eq!(before_mistake("1 && true;"), Some("1 "));
+    assert_eq!(before_mistake("false || 2;"), Some("false "));
+    assert_eq!(before_mistake("Int64 x = 1; x /= 0;"), Some("Int64 x = 1; x "));
+    assert_eq!(before_mistake("Int64 x = 1; x += true;"), Some("Int64 x = 1; x "));
+    assert_eq!(before_mistake("Int64 big = 9223372036854775807; big++;"), Some("Int64 big = 9223372036854775807; big"));
+    // ...the innermost one, when one is inside another...
+    assert_eq!(before_mistake("1 + 2 * (3 / 0);"), Some("1 + 2 * (3 "));
+    assert_eq!(before_mistake("(1 / 0) + (2 / 0);"), Some("(1 "));
+    // ...or the name, '[', member or {hole} that went wrong...
+    assert_eq!(before_mistake("1 + nope;"), Some("1 + "));
+    assert_eq!(before_mistake("q += 1;"), Some(""));
+    assert_eq!(before_mistake("\"abc\"[5];"), Some("\"abc\""));
+    assert_eq!(before_mistake("5[0];"), Some("5"));
+    assert_eq!(before_mistake("\"abc\".Size;"), Some("\"abc\"."));
+    assert_eq!(before_mistake("Int64 z = 0; $\"{z}{10 / z}\";"), Some("Int64 z = 0; $\"{z}{10 "));
+    assert_eq!(before_mistake("$\"{true:X}\";"), Some("$\"{"));
+    // ...or the built-in...
+    assert_eq!(before_mistake("1 + Timer.Uptime(5);"), Some("1 + "));
+    assert_eq!(before_mistake("Console.WriteLine(Console.Clear());"), Some("Console.WriteLine("));
+    // ...in a loop's rounds or on a later line too.
+    assert_eq!(before_mistake("for (Int64 i = 3; i >= 0; i--) { Int64 x = 10 / i; }"), Some("for (Int64 i = 3; i >= 0; i--) { Int64 x = 10 "));
+    assert_eq!(before_mistake("Int64 i = 0; do { i++; } while (10 / (3 - i) > 0);"), Some("Int64 i = 0; do { i++; } while (10 "));
+    assert_eq!(before_mistake("if (true) {\n    Int64 a = 1 / 0;\n}"), Some("if (true) {\n    Int64 a = 1 "));
+    // A mistake that belongs to a whole statement points at its start...
     assert_eq!(before_mistake("y = 5;"), Some(""));
-    assert_eq!(before_mistake("Int64 x = 1; x += true;"), Some("Int64 x = 1; "));
     assert_eq!(before_mistake("const Int64 N = 1; N++;"), Some("const Int64 N = 1; "));
     assert_eq!(before_mistake("if (5) { }"), Some(""));
     assert_eq!(before_mistake("assert 1 > 2, \"no\";"), Some(""));
     assert_eq!(before_mistake("6 * 7; Console.WriteLine(1, 2);"), Some("6 * 7; "));
     assert_eq!(before_mistake("6 * 7; Nope(1);"), Some("6 * 7; "));
-    // ...the innermost one, when statements are inside each other...
     assert_eq!(before_mistake("if (true) { Int64 a = 1; Int64 a = 2; }"), Some("if (true) { Int64 a = 1; "));
-    assert_eq!(before_mistake("for (Int64 i = 3; i >= 0; i--) { Int64 x = 10 / i; }"), Some("for (Int64 i = 3; i >= 0; i--) { "));
     assert_eq!(before_mistake("for (Int64 i = true; i < 3; i++) { }"), Some("for ("));
-    // ...even on a later line...
     assert_eq!(before_mistake("Int64 a = 1;\nif (true) {\n    a = false;\n}"), Some("Int64 a = 1;\nif (true) {\n    "));
-    // ...and the loop itself, for a mistake in its condition or its rounds.
+    // ...as does a loop, for a condition of the wrong type or too many rounds.
     assert_eq!(before_mistake("Int64 i = 0; while (i) { }"), Some("Int64 i = 0; "));
     assert_eq!(before_mistake("for (Int64 i = 0; i; i++) { }"), Some(""));
-    assert_eq!(before_mistake("Int64 i = 0; do { i++; } while (10 / (3 - i) > 0);"), Some("Int64 i = 0; "));
     assert_eq!(before_mistake("for (;;) { }"), Some(""));
-    // A mistake inside a function points at the statement with the call,
-    // as the function may come from another line.
+    // A mistake inside a function points at the call, as the function may
+    // come from another line: the outermost call, if one calls another.
     let earlier = [
         "Int64 Div(Int64 a, Int64 b) { return a / b; }",
         "Void Bad() { Int64 x = 1 / 0; }",
         "Int64 Two() { Int64 n = 2; return n; }",
+        "Int64 Half(Int64 n) { return Div(n, 2 - n % 2 * 2); }",
     ];
-    assert_eq!(before_mistake_after(&earlier, "Int64 x = 1 + Div(1, 0);", 0), Some(""));
+    assert_eq!(before_mistake_after(&earlier, "Int64 x = 1 + Div(1, 0);", 0), Some("Int64 x = 1 + "));
+    assert_eq!(before_mistake_after(&earlier, "1 + Div(Div(1, 0), 1);", 0), Some("1 + Div("));
+    assert_eq!(before_mistake_after(&earlier, "2 * Half(4) + Half(1);", 0), Some("2 * Half(4) + "));
     assert_eq!(before_mistake_after(&earlier, "6 * 7; Bad();", 0), Some("6 * 7; "));
+    assert_eq!(before_mistake("Int64 H() { return 1 / 0; } 1 + H();"), Some("Int64 H() { return 1 / 0; } 1 + "));
     assert_eq!(before_mistake("Void Oops() { y = 1; } Oops();"), Some("Void Oops() { y = 1; } "));
-    assert_eq!(before_mistake("Int64 F(Int64 n) { return F(n + 1); } F(0);"), Some("Int64 F(Int64 n) { return F(n + 1); } "));
-    // So does a mistake after a call that worked.
-    assert_eq!(before_mistake_after(&earlier, "6 * 7; Int64 x = Two() + true;", 0), Some("6 * 7; "));
+    assert_eq!(before_mistake("Int64 F(Int64 n) { return F(n + 1); } 1 + F(0);"), Some("Int64 F(Int64 n) { return F(n + 1); } 1 + "));
+    // A mistake after a call that worked points at itself again.
+    assert_eq!(before_mistake_after(&earlier, "6 * 7; Int64 x = Two() + true;", 0), Some("6 * 7; Int64 x = Two() "));
     // Ctrl+C points at what was running when it was pressed.
     assert_eq!(before_mistake_after(&[], "Int64 n = 0; while (true) { n++; }", 3), Some("Int64 n = 0; "));
+    let fib = ["Int64 Fib(Int64 n) { if (n < 2) { return n; } return Fib(n - 1) + Fib(n - 2); }"];
+    assert_eq!(before_mistake_after(&fib, "1 + Fib(20);", 1000), Some("1 + "));
 }
