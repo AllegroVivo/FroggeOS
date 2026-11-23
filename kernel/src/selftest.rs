@@ -84,8 +84,8 @@ fn check_clock() -> Result<(), &'static str> {
 fn check_ribbit() -> Result<(), &'static str> {
     let mut vars = calc::Variables::new();
     let mut functions = calc::Functions::new();
-    let mut run = |line: &'static str| calc::evaluate(line, &mut vars, &mut functions, &mut shell::Kernel);
-
+    let mut run = |line: &'static str| calc::evaluate(line, &mut vars, &mut functions, &mut shell::Kernel { printed: false });
+    
     let d = run("Int64 D(Int64 n) { if (n == 0) { return 0; } return 1 + D(n - 1); }");
     let f = run("Int64 F(Int64 n) { return F(n + 1); }");
     if d.is_err() || f.is_err() {

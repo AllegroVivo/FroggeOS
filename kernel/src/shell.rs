@@ -162,15 +162,19 @@ fn redraw(rest: &[u8], blanks: usize) {
     vga::cursor_left(rest.len() + blanks);
 }
 
-pub struct Kernel;
+pub struct Kernel {
+    pub printed: bool   // the line has printed something or cleared the screen
+}
 
 impl calc::Host for Kernel {
     fn write(&mut self, text: &str) {
         print!("{}", text);
+        self.printed = true;
     }
 
     fn clear(&mut self) {
         vga::clear_screen();
+        self.printed = true;
     }
 
     fn uptime_ms(&self) -> i64 {
@@ -185,9 +189,7 @@ impl calc::Host for Kernel {
         timer::sleep(ms);
     }
 
-    fn cancelled(&mut self) -> bool {
-        keyboard::take_ctrl_c()
-    }
+    fn cancelled(&mut self) -> bool { keyboard::take_ctrl_c() }
 }
 
 fn run_command(
@@ -280,13 +282,16 @@ fn run_command(
             }
         },
         "lang" => _language_breakdown(),
-        _ => match calc::evaluate(line, vars, functions, &mut Kernel) {
-            Ok(Some(value)) => println!("{}", value),
-            Ok(None) => {} // line ended with an `if` or `while`.
-            Err(failure) => match failure.at {
-                Some(at) => mark(line, at, &failure.error),
-                None => println!("Error: {}", failure.error),
-            },
+        _ => {
+            let mut kernel = Kernel { printed: false };
+            match calc::evaluate(line, vars, functions, &mut kernel) {
+                Ok(Some(value)) => println!("{}", value),
+                Ok(None) => {},
+                Err(failure) => match failure.at {
+                    Some(at) => mark(line, at, &failure.error, kernel.printed),
+                    None => println!("Error: {}", failure.error),
+                }
+            }
         },
     }
 }
@@ -317,11 +322,11 @@ fn _language_breakdown() {
 }
 
 // Displays a mistake found during processing.
-fn mark(code: &str, at: usize, error: &calc::Error) {
+fn mark(code: &str, at: usize, error: &calc::Error, printed: bool) {
     let start = code [..at].rfind('\n').map_or(0, |i| i + 1);
     let end = code[at..].find('\n').map_or(code.len(), |i| at + i);
     let width = (at - start + 3).min(MAX_LINE + 2);
-    if end == code.len() {
+    if end == code.len() && !printed {
         println!("{:>width$}", "^");
         println!("Error: {}", error);
     } else {

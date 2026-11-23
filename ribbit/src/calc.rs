@@ -106,7 +106,7 @@ pub type Variables = BTreeMap<String, Variable>;
 pub struct Function<'a> {
     returns: Option<Type>,          // None for void
     params: Vec<(&'a str, Type)>,
-    body: Vec<Stmt<'a>>,
+    body: Block<'a>,
 }
 
 // All declared functions by name.
@@ -129,7 +129,9 @@ struct Env<'a, 'v> {
     host: &'v mut dyn Host,
     locals: Vec<(&'a str, Variable)>,
     depth: usize,
-    stack_start: usize                  // where the stack was when the line began
+    stack_start: usize,         // where the stack was when the line began
+    statement: usize,           // where the currently executing statement starts
+    calls: usize,               // how many function calls deep the line is
 }
 
 // The most stack a line may use while it reads and runs.
@@ -174,6 +176,12 @@ impl<'a> Env<'a, '_> {
             self.locals.push((name, variable));
         }
         Ok(())
+    }
+
+    fn note(&mut self, at: usize) {
+        if self.calls == 0 {
+            self.statement = at;
+        }
     }
 }
 
@@ -608,20 +616,22 @@ enum Stmt<'a> {
     Expr(Expr<'a>),
     Assign(&'a str, Expr<'a>),
     Declare { name: &'a str, ty: Option<Type>, value: Expr<'a>, constant: bool },
-    If(Expr<'a>, Vec<Stmt<'a>>, Vec<Stmt<'a>>), // condition, then, else
+    If(Expr<'a>, Block<'a>, Block<'a>), // condition, then, else
     Return(Option<Expr<'a>>),
     Break,
     Continue,
     Loop {
         keyword: &'static str,
-        init: Vec<Stmt<'a>>,
+        init: Block<'a>,
         condition: Expr<'a>,
-        step: Vec<Stmt<'a>>,
-        body: Vec<Stmt<'a>>,
+        step: Block<'a>,
+        body: Block<'a>,
         body_first: bool        // as in a `do` loop
     },
     Assert(Expr<'a>, Option<Expr<'a>>), // condition, message
 }
+
+type Block<'a> = Vec<(usize, Stmt<'a>)>;
 
 fn shorthand<'a>(name: &'a str, op: Op, value: Expr<'a>) -> Stmt<'a> {
     Stmt::Assign(name, Expr::Binary(op, Box::new(Expr::Variable(name)), Box::new(value)))
@@ -802,6 +812,11 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // Where the next token starts.
+    fn here(&self) -> usize {
+        self.spans.get(self.pos).map_or(0, |&(start, _)| start)
+    }
+
     // Stops a line that nests deeply enough to exceed `MAX_STACK`.
     fn check_stack(&self) -> Result<(), Error<'a>> {
         if self.stack_start.saturating_sub(stack_address()) > MAX_STACK {
@@ -812,7 +827,7 @@ impl<'a> Parser<'a> {
 
     // A whole line, or the inside of a block. Statements must end with `;` except
     // in an `if`, `while`, or `for`, as they already end with a closing brace.
-    fn statements(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
+    fn statements(&mut self) -> Result<Block<'a>, Error<'a>> {
         let mut list = Vec::new();
         loop {
             match (self.peek(), self.peek_at(1), self.peek_at(2)) {
@@ -822,9 +837,10 @@ impl<'a> Parser<'a> {
                     self.function()?;
                 },
                 _ => {
+                    let at = self.here();
                     let stmt = self.statement()?;
                     let ends_with_block = matches!(stmt, Stmt::If(..) | Stmt::Loop { body_first: false, .. });
-                    list.push(stmt);
+                    list.push((at, stmt));
                     if !ends_with_block {
                         self.expect(Token::Semicolon, "expected ';'")?;
                     }
@@ -844,7 +860,7 @@ impl<'a> Parser<'a> {
                 let else_block = if self.peek() == Some(Token::Else) {
                     self.pos += 1;
                     if self.peek() == Some(Token::If) {
-                        vec![self.statement()?] // (else if)
+                        vec![(self.here(), self.statement()?)] // (else if)
                     } else {
                         self.block()?
                     }
@@ -1001,20 +1017,20 @@ impl<'a> Parser<'a> {
     }
 
     // The body of a `while` or `for` loop.
-    fn loop_body(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
+    fn loop_body(&mut self) -> Result<Block<'a>, Error<'a>> {
         self.loops += 1;
         let body = self.block()?;
         self.loops -= 1;
         Ok(body)
     }
 
-    fn for_part(&mut self, end: Token<'a>, message: &'static str) -> Result<Vec<Stmt<'a>>, Error<'a>> {
-        let part = if self.peek() == Some(end) { Vec::new() } else { vec![self.statement()?] };
+    fn for_part(&mut self, end: Token<'a>, message: &'static str) -> Result<Block<'a>, Error<'a>> {
+        let part = if self.peek() == Some(end) { Vec::new() } else { vec![(self.here(), self.statement()?)] };
         self.expect(end, message)?;
         Ok(part)
     }
     
-    fn block(&mut self) -> Result<Vec<Stmt<'a>>, Error<'a>> {
+    fn block(&mut self) -> Result<Block<'a>, Error<'a>> {
         self.expect(Token::LeftBrace, "expected '{'")?;
         self.depth += 1;
         let body = self.statements()?;
@@ -1268,9 +1284,10 @@ enum Flow {
 
 // Runs statements in order. Returns the value of the last item if that
 // item is an expression or assignment.
-fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
+fn run<'a>(stmts: &[(usize, Stmt<'a>)], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
     let mut last = None;
-    for stmt in stmts {
+    for (at, stmt) in stmts {
+        vars.note(*at);
         last = match stmt {
             Stmt::Expr(Expr::Call(name, args)) => call(name, args, vars)?,
             Stmt::Expr(Expr::BuiltIn(builtin, args)) => call_builtin(*builtin, args, vars)?,
@@ -1310,6 +1327,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                 let start = vars.locals.len();
                 vars.depth += 1;
                 run(init, vars)?;
+                vars.note(*at);
                 let mut rounds = 0;
                 while (*body_first && rounds == 0) || eval(condition, vars)?.boolean(keyword)? {
                     rounds += 1;
@@ -1329,6 +1347,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
                         Flow::Normal(_) | Flow::Continue => {}
                     }
                     run(step, vars)?;
+                    vars.note(*at);
                 }
                 vars.depth -= 1;
                 vars.locals.truncate(start);
@@ -1353,7 +1372,7 @@ fn run<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>
 }
 
 // Runs statements within a { } block.
-fn run_block<'a>(stmts: &[Stmt<'a>], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
+fn run_block<'a>(stmts: &[(usize, Stmt<'a>)], vars: &mut Env<'a, '_>) -> Result<Flow, Error<'a>> {
     let start = vars.locals.len();
     vars.depth += 1;
     let flow = run(stmts, vars)?;
@@ -1460,7 +1479,9 @@ fn call<'a>(name: &'a str, args: &[Expr<'a>], vars: &mut Env<'a, '_>) -> Result<
         locals.push((param, Variable { value, constant: false }));
     }
     let caller = core::mem::replace(&mut vars.locals, locals);
+    vars.calls += 1;
     let flow = run_block(&function.body, vars)?;
+    vars.calls -= 1;
     vars.locals = caller;
     let value = match flow {
         Flow::Return(value) => value,
@@ -1482,7 +1503,7 @@ fn parse<'a>(
     text: &'a str,
     vars: &Variables,
     stack_start: usize,
-) -> Result<(Vec<Stmt<'a>>, Vec<(&'a str, Function<'a>)>), Failure<'a>> {
+) -> Result<(Block<'a>, Vec<(&'a str, Function<'a>)>), Failure<'a>> {
     let (tokens, spans) = tokenize(text).map_err(|(error, at)| Failure { error, at: Some(at) })?;
     let mut parser = Parser::new(tokens, spans, stack_start);
     let program = parser.statements().map_err(|error| match parser.tokens[..] {
@@ -1518,8 +1539,9 @@ pub fn evaluate<'a>(
         }
         program = forever;
     }
-    let mut env = Env { globals: vars, functions, host, locals: Vec::new(), depth: 0, stack_start };
-    match run(&program, &mut env)? {
+    let mut env = Env { globals: vars, functions, host, locals: Vec::new(), depth: 0, stack_start, statement: 0, calls: 0 };
+    let flow = run(&program, &mut env).map_err(|error| Failure { error, at: Some(env.statement) })?;
+    match flow {
         Flow::Normal(value) | Flow::Return(value) => Ok(value),
         Flow::Break | Flow::Continue => Ok(None),
     }
