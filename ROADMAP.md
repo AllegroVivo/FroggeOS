@@ -63,7 +63,7 @@
   - 2.4.3 Physical frame allocator: a bitmap of 4 KB frames, with the kernel, BIOS and heap regions marked as used
   - 2.4.4 Page-table code in Rust: walk PML4 → PDPT → PD → PT, map and unmap a page, flush the TLB with `invlpg`
   - 2.4.5 Map device memory above 1 GB, such as the framebuffer and the APIC at 0xFEE00000. The boot page tables only cover the first 1 GB.
-  - 2.4.6 ⚑ Address-space model (see the decisions table)
+  - 2.4.6 Address-space model: decided, each program gets its own address space and runs in ring 3 (see the decisions table). So the page-table code in 2.4.4 builds one set of tables per program, with the kernel mapped into each.
   - 2.4.7 Size the heap from how much RAM is really there, or let it grow by asking for more frames
   - 2.4.8 ☆ Unmapped guard pages under each stack, so an overflow causes a clean page fault instead of silent corruption. The boot stack has one ✅ (it overflows into a reported double fault). The double-fault stack doesn't yet, and task stacks (2.6) will need them too.
 - **2.5 Time**
@@ -88,6 +88,13 @@
   - 2.7.4 Per-core data (current task, stacks), reached through the GS register
   - 2.7.5 The TempleOS model: core 0 runs the user interface, and the other cores take jobs from a queue
   - 2.7.6 Check that shared state (heap, scheduler) is safe with several cores. `SpinLock` is already atomic, so it's a good base.
+- **2.8 User mode (ring 3)** (decision 2.4.6)
+  - 2.8.1 Ring-3 code and data segments in the GDT, and RSP0 in the TSS, so an interrupt that arrives while a program runs switches to a kernel stack
+  - 2.8.2 Enter ring 3 with `iretq` and run a tiny test program, which the timer can still interrupt
+  - 2.8.3 System calls with `syscall` and `sysret` (the STAR, LSTAR and SFMASK MSRs): a numbered table, starting with writing text and exiting
+  - 2.8.4 Check every pointer a program passes to a system call, so a program can't make the kernel read or write memory that isn't its own
+  - 2.8.5 A fault in a program ends that program, not the whole OS: the handler reports it and stops the task
+  - 2.8.6 Load a program from a file into a fresh address space and run it as a task (needs 2.4.4, 2.6 and M4's files)
 
 ### 3. Device drivers
 - **3.1 Keyboard**
@@ -231,7 +238,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 - **8.5** ☆ Replace build.ps1 with a Rust `xtask` build tool
 - **8.6** ~~Merge `first-boot` into `main` at each milestone~~ No longer needed: `first-boot` became `main` when the project went on GitHub ✅
 
-**Parked on purpose:** USB (huge; the BIOS and QEMU emulate PS/2 for keyboard and mouse), networking (TempleOS has none by design), UEFI, sound cards, user mode and memory protection between programs.
+**Parked on purpose:** USB (huge; the BIOS and QEMU emulate PS/2 for keyboard and mouse), networking (TempleOS has none by design), UEFI and sound cards.
 
 ---
 
@@ -244,7 +251,7 @@ In TempleOS the shell, scripts and programs are all one language, HolyC.
 | M2 ✅ | Language v1 | 6.1 → 6.2 → 6.3 → 6.4 → 6.5 | Define a recursive `Fib()` at the prompt and call it |
 | M3 | Know the machine | 1.3 → 1.5 → 2.4.2–5 → 2.4.7 → 1.4 when needed | `mem` shows the real RAM, and the heap uses all of it |
 | M4 | Files and scripts | 3.6.4 → 3.6.1–3 → 5.1–5.6 → 6.6 → 7.2 | Write a program in the editor, save it, reboot, and run it |
-| M5 | Multitasking | 2.6 → 2.5.2 | A background task counts while you keep typing |
+| M5 | Multitasking | 2.6 → 2.5.2 → 2.8 | A background task counts while you keep typing, and a program that crashes in ring 3 takes down only itself |
 | M6 | Graphics and mouse | 4.1 → 1.6 or 3.5 → 4.2–4.5 → 3.4 | The shell drawn in pixels, with a mouse cursor |
 | M7 | Windows | 7.3 | Two shells side by side in draggable windows |
 | M8 | The compiler | 6.7 → 6.8 → 2.2.4 | Our own code compiled to x86-64 and running |
@@ -263,7 +270,7 @@ None of these need an answer up front. Each one gets decided when its milestone 
 |---|---|---|---|
 | 6.1 | Language syntax, typing and how it runs | M2 | ✅ Decided: C#-style with CLR type names, written up in LANGUAGE.md. Interpret first, compile in M8. |
 | 6.2 | The language's name | M2 | ✅ Decided: Ribbit. Scripts are `.rbt` files, and the crate is `ribbit`. |
-| 2.4.6 | Address-space model | M3 | One identity-mapped address space, everything in ring 0, like TempleOS. Much simpler, and Rust's safety helps make up for it. |
+| 2.4.6 | Address-space model | M3 | ✅ Decided: each program gets its own address space and runs in ring 3, calling the kernel through system calls (2.8). Unlike TempleOS, a crashing program can't take the kernel down. |
 | 5.1 / 5.2.1 | Disk layout and filesystem | M4 | A fixed layout (boot, kernel, then filesystem) with our own simple RedSea-like filesystem. `mkimage` covers getting files in from Windows, so FAT isn't needed. |
 | 5.6 | File API | M4 | Whole-file `read_file`/`write_file`, like TempleOS |
 | 2.6.4 | Scheduling | M5 | Cooperative `yield()` first, like TempleOS. Timer preemption can be added later. |

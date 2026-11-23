@@ -272,7 +272,7 @@ unsafe Void PutChar(Int64 col, Int64 row, Char c)
 - **Pointers:** `T*`, `&x`, `*p`, `p->x`, `p[i]` and pointer casts are only allowed inside `unsafe` blocks and functions.
 - **`fixed`:** `fixed (Char* p = name) { }` keeps a String alive while you hold a raw pointer into it.
 - **`volatile`** also works on what a pointer points at, so hardware registers are always really read and written. C# doesn't allow that.
-- **Ring 0:** all code still runs in ring 0, as in TempleOS. `unsafe` and `private` are rules the compiler checks, not protection the CPU enforces.
+- **Ring 3:** unlike TempleOS, a program runs in ring 3 in its own address space (roadmap ⚑ 2.4.6), so a bad pointer can only hurt its own program. A program reaches hardware such as the screen at 0xB8000 only if the kernel maps it in. `unsafe` and `private` are still rules the compiler checks. Code typed at the prompt runs inside the kernel's shell for now.
 
 **Namespaces.** `namespace Gfx { ... }` groups names, which you then use as `Gfx.Line(...)`. `using Gfx;` lets you write `Line(...)`, and a `using` typed at the prompt lasts for the session. A file can pull in another with `#include "gfx.rbt"` (6.6.3), which is a directive rather than a keyword.
 
