@@ -7,13 +7,15 @@ org 0x7E00
 KERNEL_ADDR     equ 0x10000             ; where the kernel gets loaded and run
 KERNEL_SEG      equ KERNEL_ADDR >> 4    ; same address as a real-mode segment
 KERNEL_LBA      equ 5                   ; boot sector + 4 stage-2 sectors come first
-KERNEL_SECTORS  equ 512                 ; 512 * 512 = 256KB; build.ps1 must match
+CHUNK           equ 64                  ; sectors per read: 32 KB
+; KERNEL_SECTORS comes from `build.ps1` (nasm -D)
 
 start2:
     mov [boot_drive], dl    ; BIOS gives the boot drive in DL, save it.
     mov si, msg2
     call print_string16
 
+    call check_lba
     call load_kernel
     call enable_a20
 
@@ -32,41 +34,50 @@ start2:
 
 ; ---- 16-bit helpers (must stay before the bits 32 switch) ----
 
-; Read KERNEL_SECTORS sectors, starting at disk sector KERNEL_LBA, into
-; memory at KERNEL_ADDR. One sector at a time, because a floppy read can't
-; cross a track boundary.
-load_kernel:
-    mov ax, KERNEL_SEG
-    mov es, ax
-    xor bx, bx              ; ES:BX = destination
-    mov di, KERNEL_LBA      ; di = current sector number (LBA)
-    mov bp, KERNEL_SECTORS  ; bp = sectors left to read
-.next_sector:
-    mov ax, di
-    xor dx, dx
-    mov cx, 18              ; A 1.44MB floppy has 18 sectors per track
-    div cx                  ; ax = track number, dx = sector within track
-    mov cl, dl
-    inc cl                  ; BIOS sector numbers start at 1
-    mov dh, al
-    and dh, 1               ; head = track & 1  (2 heads)
-    mov ch, al
-    shr ch, 1               ; cylinder = track / 2
+; Ensure the BIOS can read the disk by sector number (LBA) with the int 13h exts.
+check_lba:
+    mov ah, 0x41
+    mov bx, 0x55AA
     mov dl, [boot_drive]
-    mov ax, 0x0201          ; AH = 2 read sectors, AL = 1 sector
+    int 0x13
+    jc .missing             ; carry set: no extensions
+    cmp bx, 0xAA55
+    jne .missing            ; BX not swapped, no extensions
+    test cx, 1
+    jz .missing             ; bit 0 clear, no packet reads
+    ret
+.missing:
+    mov si, lba_msg
+    jmp halt_with
+
+; Read KERNEL_SECTORS sectors, starting at disk sector KERNEL_LBA, into
+; memory at KERNEL_ADDR: CHUNK sectors at a time with int 13h AH=42h,
+; which takes the sector number in a Disk Address Packet.
+load_kernel:
+    mov bp, KERNEL_SECTORS  ; bp = sectors left to read
+.next_chunk:
+    mov ax, bp
+    cmp ax, CHUNK
+    jbe .read               ; the last read may be shorter
+    mov ax, CHUNK
+.read:
+    mov [dap.count], ax
+    mov si, dap             ; DS:SI = the packet
+    mov dl, [boot_drive]
+    mov ah, 0x42            ; extended read
     int 0x13
     jc disk_error
 
-    mov ax, es
-    add ax, 0x20            ; 512 bytes = 0.20 paragraphs
-    mov es, ax              ; move the destination by one sector
-    inc di
-    dec bp
-    jnz .next_sector
+    mov ax, [dap.count]
+    add [dap.lba], ax                           ; the next sector to read
+    add word [dap.segment], CHUNK * 512 / 16    ; 32 KB further on
+    sub bp, ax
+    jnz .next_chunk
     ret
 
 disk_error:
     mov si, err_msg
+halt_with:                  ; prints the message in SI then stops
     call print_string16
 .halt:
     cli
@@ -241,6 +252,16 @@ long_mode_start:
 
 boot_drive db 0
 err_msg db "Kernel read error!", 0
+lba_msg db "No LBA disk reads!", 0
+
+; The Disk Address Packet that int 13h AH=42h reads from.
+dap:
+    db 0x10                 ; size of the packet
+    db 0                    ; always 0
+.count:     dw 0            ; sectors to read
+.offset:    dw 0            ; where in memory: offset
+.segment:   dw KERNEL_SEG   ; ... and segment
+.lba:       dq KERNEL_LBA   ; the first sector to read
 
 msg2 db "Stage 2 loaded!", 0
 msg3 db "Protected mode reached!", 0
