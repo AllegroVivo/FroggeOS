@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod boot;
+mod frames;
 mod gdt;
 mod heap;
 mod interrupts;
@@ -31,6 +32,7 @@ pub extern "C" fn _start(boot_info: &'static boot::BootInfo) -> ! {
     gdt::init();
     interrupts::init();
     paging::init();
+    frames::init(boot_info);
     pic::init();
     timer::init();
 

@@ -2,15 +2,17 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::slice;
 use ribbit::calc;
-use crate::{heap, rtc, shell, timer};
+use crate::{frames, heap, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 4] = [
+const CHECKS: [(&str, Check); 5] = [
     ("heap", check_heap),
+    ("frames", check_frames),
     ("timer", check_timer),
     ("clock", check_clock),
     ("Ribbit", check_ribbit),
@@ -56,6 +58,33 @@ fn check_heap() -> Result<(), &'static str> {
     if used_after != used || allocations_after != allocations {
         return Err("memory was not deallocated");
     }
+    Ok(())
+}
+
+fn check_frames() -> Result<(), &'static str> {
+    let free = frames::free_count();
+    let mut taken = [0; 3];
+    for (i, frame) in taken.iter_mut().enumerate() {
+        *frame = frames::alloc().ok_or("no frame was free")?;
+        // 512 words of 8 bytes - the whole frame.
+        let words = unsafe { slice::from_raw_parts_mut(*frame as *mut u64, 512) };
+        words.fill(i as u64);
+    }
+    if frames::free_count() != free - 3 {
+        return Err("taking 3 frames didn't lower the free count by 3");
+    }
+    for (i, frame) in taken.into_iter().enumerate() {
+        let words = unsafe { slice::from_raw_parts(frame as *const u64, 512) };
+        if frame < frames::RESERVED || words.iter().any(|&word| word != i as u64) {
+            return Err("a frame was in the first 2 MB, or two were the same");
+        }
+        frames::free(frame);
+    }
+    // alloc() takes the lowest free frame and gets the first one back.
+    if frames::free_count() != free || frames::alloc() != Some(taken[0]) {
+        return Err("the frames weren't all given back");
+    }
+    frames::free(taken[0]);
     Ok(())
 }
 

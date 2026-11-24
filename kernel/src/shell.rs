@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::{calc, notes};
-use crate::{boot, heap, keyboard, rtc, selftest, speaker, timer, vga};
+use crate::{boot, frames, heap, keyboard, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -285,6 +285,9 @@ fn run_command(
             }
             let (size, unit) = readable(usable);
             println!("{} {} usable", size, unit);
+            let free = frames::free_count();
+            let (size, unit) = readable(free as u64 * frames::FRAME_SIZE);
+            println!("{} {} free ({} frames)", size, unit, free);
         },
         "selftest" => {
             selftest::run();
