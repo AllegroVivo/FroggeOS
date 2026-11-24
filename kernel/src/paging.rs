@@ -115,6 +115,43 @@ pub fn unmap(virt: u64) -> Option<u64> {
     Some(frame)
 }
 
+// Makes a new address space.
+pub fn new_space() -> Result<u64, &'static str> {
+    let space = frames::alloc().ok_or("no frame was free for a PML4")?;
+    unsafe { ptr::write_bytes(space as *mut u8, 0, PAGE_SIZE) };
+    *slot(space, 0) = *slot(pml4(), 0);
+    Ok(space)
+}
+
+// Loads `space` into CR3.
+pub fn switch(space: u64) {
+    unsafe { asm!("mov cr3, {}", in(reg) space, options(nostack, preserves_flags)) };
+}
+
+// Frees an address space that isn't in use.
+//noinspection ALL
+pub fn free_space(space: u64) {
+    assert!(space != pml4(), "the address space at {:#x} is in use", space);
+    for index in 1..512 {
+        free_entry(*slot(space, index), 0);
+    }
+    frames::free(space);
+}
+
+// Frees what `entry` leads to.
+fn free_entry(entry: u64, depth: usize) {
+    if entry & PRESENT == 0 {
+        return;
+    }
+    let addr = entry & ADDRESS;
+    if depth < 3 {
+        for index in 0..512 {
+            free_entry(*slot(addr, index), depth + 1);
+        }
+    }
+    frames::free(addr);
+}
+
 // Finds the PT entry for `virt`.
 fn pt_entry(virt: u64, create: bool) -> Result<&'static mut u64, &'static str> {
     let mut table = pml4();
@@ -141,7 +178,7 @@ fn slot(table: u64, index: u64) -> &'static mut u64 {
 }
 
 // The PML4's address.
-fn pml4() -> u64 {
+pub fn pml4() -> u64 {
     let cr3: u64;
     unsafe { asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack, preserves_flags)) };
     cr3 & ADDRESS

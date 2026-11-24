@@ -10,10 +10,11 @@ use crate::{print, println};
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 6] = [
+const CHECKS: [(&str, Check); 7] = [
     ("heap", check_heap),
     ("frames", check_frames),
     ("paging", check_paging),
+    ("spaces", check_spaces),
     ("timer", check_timer),
     ("clock", check_clock),
     ("Ribbit", check_ribbit),
@@ -122,6 +123,34 @@ fn check_paging() -> Result<(), &'static str> {
     }
     frames::free(a);
     frames::free(b);
+    Ok(())
+}
+
+// Makes an address space and, from inside it, maps a page at 512 GB and
+// writes through it.
+fn check_spaces() -> Result<(), &'static str> {
+    const PROGRAM_PAGE: u64 = 0x80_0000_0000;   // the first address programs get - 512 GB
+    let free = frames::free_count();
+    let kernel = paging::pml4();
+    let space = paging::new_space()?;
+    let frame = frames::alloc().ok_or("no frame was free")?;
+    // The code, the stack and the interrupt handlers are all in the
+    // kernel's part, so everything keeps running after the switch.
+    paging::switch(space);
+    let mapped = paging::map(PROGRAM_PAGE, frame);
+    if mapped.is_ok() {
+        unsafe { (PROGRAM_PAGE as *mut u64).write_volatile(frame) };
+    }
+    paging::switch(kernel);
+    mapped?;
+    let read = unsafe { (frame as *const u64).read_volatile() };
+    if read != frame || paging::translate(PROGRAM_PAGE).is_some() {
+        return Err("the page wasn't mapped in the new space alone");
+    }
+    paging::free_space(space);
+    if frames::free_count() != free {
+        return Err("freeing the space didn't give back every frame");
+    }
     Ok(())
 }
 
