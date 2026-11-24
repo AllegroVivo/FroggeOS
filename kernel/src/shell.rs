@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::{calc, notes};
-use crate::{boot, frames, heap, keyboard, rtc, selftest, speaker, timer, vga};
+use crate::{boot, frames, heap, keyboard, paging, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -216,6 +216,7 @@ fn run_command(
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("mem          list the memory the BIOS reports");
+            println!("walk <addr>  show how the page tables map an address");
             println!("selftest     check that the kernel's parts still work");
             println!("vars         list the stored variables");
             println!("lang         view a list of the current language features for Ribbit")
@@ -288,6 +289,29 @@ fn run_command(
             let free = frames::free_count();
             let (size, unit) = readable(free as u64 * frames::FRAME_SIZE);
             println!("{} {} free ({} frames)", size, unit, free);
+        },
+        "walk" => {
+            let word = words.next().unwrap_or("");
+            let digits = word.strip_prefix("0x").unwrap_or(word);
+            let Ok(virt) = u64::from_str_radix(digits, 16) else {
+                println!("usage: walk <hex address>, e.g. 'walk 0xB8000'");
+                return;
+            };
+            for step in paging::walk(virt) {
+                print!("{:<4} [{:>3}] = {:>#10X}  ", step.table, step.index, step.entry);
+                match step.target {
+                    paging::Target::Table(addr) => println!("table at {:#X}", addr),
+                    paging::Target::Page(addr, size) => {
+                        let (size, unit) = readable(size);
+                        println!("{} {} page at {:#X}", size, unit, addr);
+                    },
+                    paging::Target::Missing => println!("not present"),
+                }
+            }
+            match paging::translate(virt) {
+                Some(phys) => println!("{:#X} maps to {:#X}", virt, phys),
+                None => println!("{:#X} isn't mapped", virt),
+            }
         },
         "selftest" => {
             selftest::run();

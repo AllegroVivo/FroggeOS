@@ -4,15 +4,16 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::slice;
 use ribbit::calc;
-use crate::{frames, heap, rtc, shell, timer};
+use crate::{frames, heap, paging, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 5] = [
+const CHECKS: [(&str, Check); 6] = [
     ("heap", check_heap),
     ("frames", check_frames),
+    ("paging", check_paging),
     ("timer", check_timer),
     ("clock", check_clock),
     ("Ribbit", check_ribbit),
@@ -85,6 +86,42 @@ fn check_frames() -> Result<(), &'static str> {
         return Err("the frames weren't all given back");
     }
     frames::free(taken[0]);
+    Ok(())
+}
+
+// Maps a test page to one frame and then another.
+fn check_paging() -> Result<(), &'static str> {
+    // 256 GB + 2 MB + 8 KB: in the kernel's part, unused, and with a
+    // different index at each level (0, 256, 1, 2), so a mix-up would show.
+    const TEST_PAGE: u64 = 0x40_0020_2000;
+    // The boot tables map the VGA buffer with a 4 KB page and 2-4 MB with a
+    // 2 MB page, and leave the guard page out.
+    let boot = [(0xB8000, Some(0xB8000)), (0x20_1234, Some(0x20_1234)), (0x7F000, None)];
+    if boot.iter().any(|&(virt, phys)| paging::translate(virt) != phys) {
+        return Err("the boot tables don't map what they should");
+    }
+    let a = frames::alloc().ok_or("no frame was free")?;
+    let b = frames::alloc().ok_or("no frame was free")?;
+    // 4 MB is inside one of the boot tables' 2 MB pages.
+    if paging::map(0x40_0000, a).is_ok() {
+        return Err("map() went inside a 2 MB page");
+    }
+    for frame in [a, b] {
+        paging::map(TEST_PAGE, frame)?;
+        if paging::map(TEST_PAGE, frame).is_ok() {
+            return Err("map() mapped the same page twice");
+        }
+        unsafe { (TEST_PAGE as *mut u64).write_volatile(frame) };
+        let read = unsafe { (frame as *const u64).read_volatile() };
+        if read != frame || paging::translate(TEST_PAGE + 8) != Some(frame + 8) {
+            return Err("the test page didn't lead to its frame");
+        }
+        if paging::unmap(TEST_PAGE) != Some(frame) || paging::translate(TEST_PAGE).is_some() {
+            return Err("unmap() didn't remove the page");
+        }
+    }
+    frames::free(a);
+    frames::free(b);
     Ok(())
 }
 
