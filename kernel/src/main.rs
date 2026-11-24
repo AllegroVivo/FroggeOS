@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod boot;
 mod gdt;
 mod heap;
 mod interrupts;
@@ -23,7 +24,7 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
+pub extern "C" fn _start(boot_info: &'static boot::BootInfo) -> ! {
     vga::clear_screen();
 
     serial::init();
@@ -34,6 +35,7 @@ pub extern "C" fn _start() -> ! {
     timer::init();
 
     println!("Hello, FroggeOS!");
+    println!("Booted from drive {:#x}", boot_info.boot_drive);
     println!("6 * 7 = {}", 6 * 7);
 
     unsafe { asm!("int3") };
@@ -45,7 +47,7 @@ pub extern "C" fn _start() -> ! {
     #[cfg(feature = "selftest")]
     selftest::exit_qemu(selftest::run());
 
-    shell::run()
+    shell::run(boot_info)
 }
 
 #[panic_handler]

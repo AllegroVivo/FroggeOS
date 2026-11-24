@@ -8,15 +8,16 @@ KERNEL_ADDR     equ 0x10000             ; where the kernel gets loaded and run
 KERNEL_SEG      equ KERNEL_ADDR >> 4    ; same address as a real-mode segment
 KERNEL_LBA      equ 5                   ; boot sector + 4 stage-2 sectors come first
 CHUNK           equ 64                  ; sectors per read: 32 KB
-; KERNEL_SECTORS comes from `build.ps1` (nasm -D)
+MAX_REGIONS     equ 32                  ; memory-map regions boot_info has room for
 
 start2:
-    mov [boot_drive], dl    ; BIOS gives the boot drive in DL, save it.
+    mov [boot_info.boot_drive], dl    ; BIOS gives the boot drive in DL, save it.
     mov si, msg2
     call print_string16
 
     call check_lba
     call load_kernel
+    call read_memory_map
     call enable_a20
 
     cli                     ; no more interrupts from here on - BIOS
@@ -38,7 +39,7 @@ start2:
 check_lba:
     mov ah, 0x41
     mov bx, 0x55AA
-    mov dl, [boot_drive]
+    mov dl, [boot_info.boot_drive]
     int 0x13
     jc .missing             ; carry set: no extensions
     cmp bx, 0xAA55
@@ -63,7 +64,7 @@ load_kernel:
 .read:
     mov [dap.count], ax
     mov si, dap             ; DS:SI = the packet
-    mov dl, [boot_drive]
+    mov dl, [boot_info.boot_drive]
     mov ah, 0x42            ; extended read
     int 0x13
     jc disk_error
@@ -74,10 +75,33 @@ load_kernel:
     sub bp, ax
     jnz .next_chunk
     ret
+    
+; Request the memory map from the BIOS. One region pushed into boot_info 
+; per call. Region size is 24 bytes: base, length, kind, and attributes.
+read_memory_map:
+    xor ebx, ebx                ; 0 = start with the first region
+    mov di, boot_info.regions  ; ES:DI = wehere the region goes
+.next:
+    mov dword [di + 20], 1      ; attributes "valid"
+    mov eax, 0xE820
+    mov edx, 0x534D4150         ; BIOS checks for and echoes the 'SMAP'
+    mov ecx, 24                 ; room for a single region
+    int 0x15
+    jc .done                    ; carry: no more regions or no E820
+    cmp eax, 0x534D4150
+    jne .done
+    add di, 24
+    inc byte [boot_info.region_count]
+    cmp byte [boot_info.region_count], MAX_REGIONS
+    je .done                    ; boot info is full
+    test ebx, ebx
+    jnz .next                   ; ebx is 0 after last region
+.done:
+    ret
 
 disk_error:
     mov si, err_msg
-halt_with:                  ; prints the message in SI then stops
+halt_with:                      ; prints the message in SI then stops
     call print_string16
 .halt:
     cli
@@ -247,12 +271,20 @@ long_mode_start:
     add rdi, 2
     jmp .print64
 .enter_kernel:
+    mov rdi, boot_info
     mov rax, KERNEL_ADDR
     call rax                ; Into the Rust kernel - it never returns
 
-boot_drive db 0
 err_msg db "Kernel read error!", 0
 lba_msg db "No LBA disk reads!", 0
+
+align 8, db 0
+boot_info:
+.boot_drive:    db 0
+.region_count:  db 0
+                times 6 db 0
+.regions:       times MAX_REGIONS * 24 db 0
+
 
 ; The Disk Address Packet that int 13h AH=42h reads from.
 dap:

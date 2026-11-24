@@ -1,6 +1,6 @@
 # FroggeOS Roadmap
 
-**Status (2026-11-23):** milestones 0, 1 and 2 are done, and work on M3 has started. FroggeOS boots from a hard-disk image through its own stage 1 and stage 2 into long mode, then runs a Rust kernel. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker with a note player, a PS/2 keyboard with arrow keys, Caps Lock, Ctrl and Alt (Ctrl+C throws away a typed line or stops running code), a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean, Char and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error and under the exact spot where a running line went wrong, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 139 KB of its 256 KB budget.
+**Status (2026-11-24):** milestones 0, 1 and 2 are done, and work on M3 has started. FroggeOS boots from a hard-disk image through its own stage 1 and stage 2 into long mode, then runs a Rust kernel, passing it the boot drive and the BIOS memory map. The kernel has VGA text output copied to a serial port, its own GDT and TSS, named handlers for all 32 CPU exceptions (a double fault gets its own stack), a guard page under the stack, the PIC, a 100 Hz timer, the CMOS clock and the PC speaker with a note player, a PS/2 keyboard with arrow keys, Caps Lock, Ctrl and Alt (Ctrl+C throws away a typed line or stops running code), a free-list heap, a shell whose arrow keys edit the line and recall earlier ones, a `mem` command that lists the memory map, and a `selftest` command that `build.ps1 -SelfTest` runs with no window. The shell runs Ribbit, which lives in its own crate with `cargo test` tests and so far has Int64, Boolean, Char and String values, typed declarations (`Int64`, `Boolean`, `var`, `const`), block scope, comparisons, `&&` `||` `!`, bitwise operators, shifts and hex literals, `if`/`else`, `while`, `do`/`while`, `for`, `break` and `continue`, `assert`, shorthand assignment (`+=`, `++`), functions with recursion, built-ins like `Console.WriteLine` and `Speaker.Beep`, `$"..."` interpolation, multi-line input, a `^` under each syntax error and under the exact spot where a running line went wrong, and C#'s rule that every statement ends with `;`. M1's demo works (editing and recalling lines, `date`, a beep, and a clean report for a stack overflow), and so does M2's: a recursive `Fib()` typed at the prompt. The kernel is 140 KB of the 444 KB that fits below the stack.
 
 **How to read this:** every item has an ID so we can say "next is 2.2.2" and break any item down further when we reach it.
 - ✅ means done.
@@ -27,10 +27,10 @@
 - **1.4 A bigger kernel** (stage 2 loads the kernel at 0x10000, and build.ps1 stops a kernel that would reach the stack's guard page at 0x7F000, about 444 KB; needed once the kernel outgrows that)
   - 1.4.1 Load the kernel in chunks into a buffer below 1 MB, then copy each chunk above 1 MB. Real mode can't write past 1 MB directly.
   - 1.4.2 Move the stack (now at 0x90000) and the heap (hard-coded to 1–2 MB) out of the kernel's new space
-- **1.5 Pass information to the kernel**
-  - 1.5.1 Collect the BIOS memory map (int 15h, E820) in stage 2
-  - 1.5.2 Define a `BootInfo` struct with the same layout in assembly and Rust: memory map, boot drive, and later the framebuffer
-  - 1.5.3 Pass its address in RDI so `_start(boot_info: &BootInfo)` receives it. This follows the System V calling convention, which the `extern "C"` `_start` already uses.
+- **1.5 Pass information to the kernel** ✅
+  - 1.5.1 Collect the BIOS memory map (int 15h, E820) in stage 2 ✅
+  - 1.5.2 Define a `BootInfo` struct with the same layout in assembly and Rust: memory map, boot drive, and later the framebuffer ✅
+  - 1.5.3 Pass its address in RDI so `_start(boot_info: &BootInfo)` receives it. This follows the System V calling convention, which the `extern "C"` `_start` already uses. ✅
 - **1.6 Graphics mode at boot** (only if 4.1 picks this route)
   - 1.6.1 List the video modes with int 10h, 4F00h/4F01h, and pick one
   - 1.6.2 Set it with 4F02h, using a linear framebuffer, and store the address, pitch and bits per pixel in `BootInfo`
@@ -59,7 +59,7 @@
   - 2.3.6 Replace the PIC with the Local APIC and I/O APIC (needs 2.7.1)
 - **2.4 Memory**
   - 2.4.1 Free-list heap that merges neighbouring free blocks ✅
-  - 2.4.2 Read the E820 map from 1.5 and add a `mem` command
+  - 2.4.2 Read the E820 map from 1.5 and add a `mem` command ✅
   - 2.4.3 Physical frame allocator: a bitmap of 4 KB frames, with the kernel, BIOS and heap regions marked as used
   - 2.4.4 Page-table code in Rust: walk PML4 → PDPT → PD → PT, map and unmap a page, flush the TLB with `invlpg`
   - 2.4.5 Map device memory above 1 GB, such as the framebuffer and the APIC at 0xFEE00000. The boot page tables only cover the first 1 GB.

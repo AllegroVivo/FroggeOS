@@ -4,14 +4,14 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::{calc, notes};
-use crate::{heap, keyboard, rtc, selftest, speaker, timer, vga};
+use crate::{boot, heap, keyboard, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
 // ``> `` + 78 characters fills an 80-character row.
 const MAX_LINE: usize = 78;
 
-pub fn run() -> ! {
+pub fn run(boot_info: &boot::BootInfo) -> ! {
     println!("FroggeOS shell. Type 'help' for a list of commands.");
 
     let mut pending = String::new();
@@ -51,7 +51,7 @@ pub fn run() -> ! {
                 }
                 if !pending.is_empty() {
                     history.push(pending.clone());
-                    run_command(&pending, &history, &mut vars, &mut functions);
+                    run_command(&pending, &history, &mut vars, &mut functions, boot_info);
                     pending.clear();
                 }
                 print!("> ");
@@ -197,6 +197,7 @@ fn run_command(
     history: &[String],
     vars: &mut calc::Variables,
     functions: &mut calc::Functions,
+    boot_info: &boot::BootInfo
 ) {
     let mut words = line.split_whitespace();
     let Some(command) = words.next() else {
@@ -214,6 +215,7 @@ fn run_command(
             println!("play         play a tune: play C4 E4 G4:500 R C5 (125 ms a note)");
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
+            println!("mem          list the memory the BIOS reports");
             println!("selftest     check that the kernel's parts still work");
             println!("vars         list the stored variables");
             println!("lang         view a list of the current language features for Ribbit")
@@ -272,9 +274,21 @@ fn run_command(
                 in_use, allocations, reusable
             );
         },
+        "mem" => {
+            let mut usable = 0;
+            for region in boot_info.regions() {
+                let (size, unit) = readable(region.length);
+                println!("{:>#12X}  {:>3} {}  {}", region.base, size, unit, region.kind_name());
+                if region.kind == boot::USABLE {
+                    usable += region.length;
+                }
+            }
+            let (size, unit) = readable(usable);
+            println!("{} {} usable", size, unit);
+        },
         "selftest" => {
             selftest::run();
-        }
+        },
         "vars" => {
             for (name, variable) in vars.iter() {
                 let constant = if variable.constant { "const " } else { "" };
@@ -294,6 +308,19 @@ fn run_command(
             }
         },
     }
+}
+
+fn readable(bytes: u64) -> (u64, &'static str) {
+    const KB: u64 = 1 << 10;
+    const MB: u64 = 1 << 20;
+    const GB: u64 = 1 << 30;
+    let (unit, name) = match bytes {
+        GB.. => (GB, "GB"),
+        MB.. => (MB, "MB"),
+        KB.. => (KB, "KB"),
+        _ => (1, "bytes")
+    };
+    ((bytes + unit / 2) / unit, name)
 }
 
 fn _language_breakdown() {
