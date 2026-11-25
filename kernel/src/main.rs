@@ -32,7 +32,9 @@ pub extern "C" fn _start(boot_info: &'static boot::BootInfo) -> ! {
     gdt::init();
     interrupts::init();
     paging::init();
+    boot::keep(boot_info);
     frames::init(boot_info);
+    paging::map_ram(boot_info);
     pic::init();
     timer::init();
 

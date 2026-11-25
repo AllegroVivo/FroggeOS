@@ -1,5 +1,7 @@
 // Boot information handed to the Kernel by Stage 2 of the bootloader.
 
+use crate::lock::SpinLock;
+
 // The type of region the kernel may use as RAM.
 pub const USABLE: u32 = 1;
 
@@ -39,4 +41,17 @@ impl BootInfo {
         let count = (self.region_count as usize).min(self.regions.len());
         &self.regions[..count]
     }
+}
+
+// The boot info once handed over by main.
+static INFO: SpinLock<Option<&'static BootInfo>> = SpinLock::new(None);
+
+// Keeps the boot info for `info()`.
+pub fn keep(info: &'static BootInfo) {
+    *INFO.lock() = Some(info);
+}
+
+// The kept boot info.
+pub fn info() -> &'static BootInfo {
+    INFO.lock().expect("the boot info hasn't been stored yet")
 }

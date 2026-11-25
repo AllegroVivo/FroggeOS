@@ -3,6 +3,7 @@
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::ptr;
+use crate::boot::{self, BootInfo};
 use crate::frames;
 
 // The bootloader's page directory.
@@ -10,6 +11,7 @@ const PAGE_DIRECTORY: *mut u64 = 0x3000 as *mut u64;
 const PAGE_TABLE: *mut u64 = 0x4000 as *mut u64;
 
 const PAGE_SIZE: usize = 4096;
+const LARGE_PAGE: u64 = 1 << 21;
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
 const HUGE: u64 = 1 << 7;
@@ -38,6 +40,23 @@ pub fn init() {
         PAGE_DIRECTORY.write_volatile(PAGE_TABLE as u64 | PRESENT | WRITABLE);
 
         asm!("mov {tmp}, cr3", "mov cr3, {tmp}", tmp = out(reg) _, options(nostack, preserves_flags));
+    }
+}
+
+// Maps every 2 MB page that holds usable RAM at its own address.
+pub fn map_ram(boot_info: &BootInfo) {
+    let usable = boot_info.regions().iter().filter(|r| r.kind == boot::USABLE);
+    for region in usable {
+        let first = region.base & !(LARGE_PAGE - 1);
+        let end = region.base + region.length;
+        for page in (first..end).step_by(LARGE_PAGE as usize) {
+            let Ok(entry) = find_entry(page, 2, true) else {
+                panic!("couldn't map the RAM above 1 GB");
+            };
+            if *entry & PRESENT == 0 {
+                *entry = page | PRESENT | WRITABLE | HUGE;
+            }
+        }
     }
 }
 
@@ -94,7 +113,7 @@ pub fn translate(virt: u64) -> Option<u64> {
 
 // Maps the 4 KB page at `virt` to `frame`.
 pub fn map(virt: u64, frame: u64) -> Result<(), &'static str> {
-    let entry = pt_entry(virt, true)?;
+    let entry = find_entry(virt, 3, true)?;
     if *entry & PRESENT != 0 {
         return Err("the page is already mapped");
     }
@@ -105,7 +124,7 @@ pub fn map(virt: u64, frame: u64) -> Result<(), &'static str> {
 
 // Unmaps the 4 KB page at `virt` and returns its frame.
 pub fn unmap(virt: u64) -> Option<u64> {
-    let entry = pt_entry(virt, false).ok()?;
+    let entry = find_entry(virt, 3, false).ok()?;
     if *entry & PRESENT == 0 {
         return None;
     }
@@ -153,9 +172,9 @@ fn free_entry(entry: u64, depth: usize) {
 }
 
 // Finds the PT entry for `virt`.
-fn pt_entry(virt: u64, create: bool) -> Result<&'static mut u64, &'static str> {
+fn find_entry(virt: u64, depth: usize, create: bool) -> Result<&'static mut u64, &'static str> {
     let mut table = pml4();
-    for &(_, covers) in &LEVELS[..3] {
+    for &(_, covers) in &LEVELS[..depth] {
         let entry = slot(table, (virt / covers) % 512);
         if *entry & PRESENT == 0 {
             if !create {
@@ -169,7 +188,7 @@ fn pt_entry(virt: u64, create: bool) -> Result<&'static mut u64, &'static str> {
         }
         table = *entry & ADDRESS;
     }
-    Ok(slot(table, (virt / PAGE_SIZE as u64) % 512))
+    Ok(slot(table, (virt / LEVELS[depth].1) % 512))
 }
 
 // Entry `index` of the table at `table`.

@@ -37,7 +37,7 @@ $image = New-Object byte[] (1024 * 1024)
 [System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $image)
 
 if ($SelfTest) {
-    qemu-system-x86_64 -drive file=disk.img,format=raw,if=ide -rtc base=localtime -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
+    qemu-system-x86_64 -drive file=disk.img,format=raw,if=ide -rtc base=localtime -m 4G -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04
     # QEMU exits with the value the kernel wrote times 2 plus 1.
     if ($LASTEXITCODE -ne 33) {
         Write-Error "selftest failed (QEMU exit code $LASTEXITCODE)"
@@ -46,5 +46,5 @@ if ($SelfTest) {
     "selftest passed"
     exit 0
 } else {
-    qemu-system-x86_64 -drive file=disk.img,format=raw,if=ide -rtc base=localtime -audiodev dsound,id=snd0 -machine pcspk-audiodev=snd0 -serial stdio
+    qemu-system-x86_64 -drive file=disk.img,format=raw,if=ide -rtc base=localtime -m 4G -audiodev dsound,id=snd0 -machine pcspk-audiodev=snd0 -serial stdio
 }

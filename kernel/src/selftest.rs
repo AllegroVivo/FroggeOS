@@ -4,20 +4,21 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::slice;
 use ribbit::calc;
-use crate::{frames, heap, paging, rtc, shell, timer};
+use crate::{boot, frames, heap, paging, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 7] = [
-    ("heap", check_heap),
-    ("frames", check_frames),
-    ("paging", check_paging),
-    ("spaces", check_spaces),
-    ("timer", check_timer),
-    ("clock", check_clock),
-    ("Ribbit", check_ribbit),
+const CHECKS: [(&str, Check); 8] = [
+    ("heap",    check_heap),
+    ("frames",  check_frames),
+    ("paging",  check_paging),
+    ("spaces",  check_spaces),
+    ("ram",     check_ram),
+    ("timer",   check_timer),
+    ("clock",   check_clock),
+    ("Ribbit",  check_ribbit),
 ];
 
 pub fn run() -> bool {
@@ -150,6 +151,23 @@ fn check_spaces() -> Result<(), &'static str> {
     paging::free_space(space);
     if frames::free_count() != free {
         return Err("freeing the space didn't give back every frame");
+    }
+    Ok(())
+}
+
+// RAM allocated by `frames::alloc()`.
+fn check_ram() -> Result<(), &'static str> {
+    let regions = boot::info().regions().iter();
+    let usable = regions.filter(|r| r.kind == boot::USABLE && r.base + r.length > frames::RESERVED);
+    for region in usable {
+        let first = region.base.max(frames::RESERVED);
+        let last = region.base + region.length - 1;
+        for addr in (first..last).step_by(1 << 21).chain([last]) {
+            if paging::translate(addr) != Some(addr) {
+                return Err("some usable RAM isn't mapped at its own address");
+            }
+            unsafe { (addr as *const u8).read_volatile() };
+        }
     }
     Ok(())
 }
