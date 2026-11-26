@@ -3,6 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::array;
 use core::slice;
 use ribbit::calc;
 use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
@@ -292,9 +293,23 @@ fn check_ata() -> Result<(), &'static str> {
     if sector[..] != *kernel {
         return Err("sector 5 doesn't hold the start of the kernel");
     }
-    disk.read(disk.sectors() - 1, &mut sector)?;
+    let last = disk.sectors() - 1;
+    let mut old = [0; SECTOR_SIZE];
+    disk.read(disk.sectors() - 1, &mut old)?;
     if disk.read(disk.sectors(), &mut sector).is_ok() {
         return Err("the disk read a sector past its end");
+    }
+    let pattern: [u8; SECTOR_SIZE] = array::from_fn(|i| (i % 251) as u8);
+    for data in [pattern, old] {
+        disk.write(last, &data)?;
+        disk.flush()?;
+        disk.read(last, &mut sector)?;
+        if sector != data {
+            return Err("the last sector didn't read back what was written");
+        }
+    }
+    if disk.write(last + 1, &pattern).is_ok() {
+        return Err("the disk wrote a sector past its end");
     }
     Ok(())
 }

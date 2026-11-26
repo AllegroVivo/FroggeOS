@@ -22,6 +22,9 @@ pub trait BlockDevice {
 
     // Copies `buffer` into sector `sector`.
     fn write(&mut self, sector: u64, buffer: &[u8; SECTOR_SIZE]) -> Result<(), &'static str>;
+
+    // Ensures all sectors written so far are actually on the disk.
+    fn flush(&mut self) -> Result<(), &'static str>;
 }
 
 // A disk kept on the heap.
@@ -47,6 +50,10 @@ impl BlockDevice for RamDisk {
 
     fn write(&mut self, sector: u64, buffer: &[u8; SECTOR_SIZE]) -> Result<(), &'static str> {
         *self.data.get_mut(sector as usize).ok_or(PAST_END)? = *buffer;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), &'static str> {
         Ok(())
     }
 }

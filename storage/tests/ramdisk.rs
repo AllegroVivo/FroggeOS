@@ -85,3 +85,16 @@ fn through_the_trait() {
     disk.read(1, &mut buffer).unwrap();
     assert_eq!((disk.sectors(), buffer), (2, pattern(1)));
 }
+
+#[test]
+fn flush_keeps_what_was_written() {
+    // A RAM disk has no cache, so flush() only has to succeed and change nothing.
+    let mut disk = RamDisk::new(2);
+    disk.write(1, &pattern(1)).unwrap();
+    assert_eq!(disk.flush(), Ok(()));
+    let mut buffer = filled(0);
+    for (sector, data) in [(0, filled(0)), (1, pattern(1))] {
+        disk.read(sector, &mut buffer).unwrap();
+        assert_eq!(buffer, data);
+    }
+}
