@@ -5,10 +5,11 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::mem::size_of;
 use core::ptr::null_mut;
 use crate::lock::SpinLock;
+use crate::{frames, paging};
 
-// 1MB-2MB: ordinary RAM that nothing uses.
-const START: usize = 0x10_0000;
-const SIZE: usize = 0x10_0000;
+pub const START: usize = 0x60_0000_0000;
+const LIMIT: usize = 0x80_0000_0000;
+const PAGE_SIZE: usize = 4096;
 
 // Every block must start on a boundary of this size and must be a
 // multiple of this many bytes long.
@@ -16,11 +17,12 @@ const BLOCK_ALIGN: usize = 16;
 
 struct FreeBlock {
     size: usize,            // the size of this whole block, in bytes
-    next: *mut FreeBlock,   // the next free block, or ``null` for end of list.
+    next: *mut FreeBlock,   // the next free block, or ``null` for end of list
 }
 
 struct Heap {
-    next: usize,            // starting point for the unused memory.
+    next: usize,            // starting point for the unused memory
+    end: usize,             // the end of the mapped memory
     free: *mut FreeBlock,   // first block in the free list (or null if empty)
     allocations: usize      // the number of unfreed allocations
 }
@@ -34,15 +36,13 @@ struct FreeListAllocator(SpinLock<Heap>);
 #[global_allocator]
 static ALLOCATOR: FreeListAllocator = FreeListAllocator(SpinLock::new(Heap {
     next: START,
+    end: START,
     free: null_mut(),
     allocations: 0,
 }));
 
 unsafe impl GlobalAlloc for FreeListAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() > SIZE {
-            return null_mut(); // can never fit
-        }
         let size = block_size(layout);
         let align = layout.align().max(BLOCK_ALIGN);
         let mut heap = self.0.lock();
@@ -56,7 +56,7 @@ unsafe impl GlobalAlloc for FreeListAllocator {
         // Nothing suitable in the list - use fresh memory.
         let start = align_up(heap.next, align);
         let end = start + size;
-        if end > START + SIZE {
+        if end > LIMIT || heap.grow(end).is_none() {
             return null_mut(); // out of memory
         }
         if start > heap.next {
@@ -146,6 +146,16 @@ impl Heap {
         }
         None
     }
+
+    // Maps the frames at the end fo the heap up until `end`.
+    fn grow(&mut self, end: usize) -> Option<()> {
+        while self.end < end {
+            let frame = frames::alloc()?;
+            paging::map(self.end as u64, frame).ok()?;
+            self.end += PAGE_SIZE;
+        }
+        Some(())
+    }
 }
 
 // How many bytes a block for ``layout`` takes.
@@ -169,4 +179,10 @@ pub fn stats() -> (usize, usize, usize) {
         current = block.next;
     }
     (heap.next - START - reusable, reusable, heap.allocations)
+}
+
+// How many bytes are mapped by the heap.
+pub fn size() -> usize {
+    let heap = ALLOCATOR.0.lock();
+    heap.end - START
 }

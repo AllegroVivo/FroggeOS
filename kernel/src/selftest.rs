@@ -11,8 +11,9 @@ use crate::{print, println};
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 9] = [
+const CHECKS: [(&str, Check); 10] = [
     ("heap",    check_heap),
+    ("growth",  check_growth),
     ("frames",  check_frames),
     ("paging",  check_paging),
     ("spaces",  check_spaces),
@@ -62,6 +63,19 @@ fn check_heap() -> Result<(), &'static str> {
     let (used_after, _, allocations_after) = heap::stats();
     if used_after != used || allocations_after != allocations {
         return Err("memory was not deallocated");
+    }
+    Ok(())
+}
+
+// Allocates 2 MB and checks that the heap grew and has correct block indices.
+fn check_growth() -> Result<(), &'static str> {
+    const WORDS: usize = 1 << 18; // 2 MB of u64s
+    let words: Vec<u64> = (0..WORDS as u64).collect();
+    if heap::size() < WORDS * 8 {
+        return Err("the heap didn't grow");
+    }
+    if words.iter().enumerate().any(|(i, &word)| word != i as u64) {
+        return Err("2 MB Vec holds incorrect values");
     }
     Ok(())
 }

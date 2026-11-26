@@ -274,6 +274,8 @@ fn run_command(
                 "{} bytes in use by {} allocations, {} bytes free for reuse",
                 in_use, allocations, reusable
             );
+            let (size, unit) = readable(heap::size() as u64);
+            println!("{} {} mapped at {:#X}", size, unit, heap::START);
         },
         "mem" => {
             let mut usable = 0;
