@@ -16,3 +16,12 @@ pub unsafe fn inb(port: u16) -> u8 {
     }
     value
 }
+
+// Read a 16-bit word from a port.
+pub unsafe fn inw(port: u16) -> u16 {
+    let value: u16;
+    unsafe {
+        asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack, preserves_flags))
+    }
+    value
+}

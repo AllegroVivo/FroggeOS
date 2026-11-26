@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod ata;
 mod boot;
 mod frames;
 mod gdt;

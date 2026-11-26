@@ -6,13 +6,13 @@ use core::arch::asm;
 use core::slice;
 use ribbit::calc;
 use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
-use crate::{boot, frames, heap, paging, rtc, shell, timer};
+use crate::{ata, boot, frames, heap, paging, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 11] = [
+const CHECKS: [(&str, Check); 12] = [
     ("heap",    check_heap),
     ("growth",  check_growth),
     ("frames",  check_frames),
@@ -24,6 +24,7 @@ const CHECKS: [(&str, Check); 11] = [
     ("clock",   check_clock),
     ("Ribbit",  check_ribbit),
     ("ramdisk", check_ramdisk),
+    ("ata",     check_ata),
 ];
 
 pub fn run() -> bool {
@@ -275,6 +276,25 @@ fn check_ramdisk() -> Result<(), &'static str> {
     }
     if disk.sectors() != SECTORS || disk.read(SECTORS, &mut buffer).is_ok() {
         return Err("the RAM disk is of an invalid size");
+    }
+    Ok(())
+}
+
+fn check_ata() -> Result<(), &'static str> {
+    let mut disk = ata::identify().ok_or("no ATA disk was found")?;
+    let mut sector = [0; SECTOR_SIZE];
+    disk.read(0, &mut sector)?;
+    if sector[510..] != [0x55, 0xAA] {
+        return Err("sector 0 doesn't end in the boot signature");
+    }
+    disk.read(5, &mut sector)?;
+    let kernel = unsafe { slice::from_raw_parts(0x10000 as *const u8, SECTOR_SIZE) };
+    if sector[..] != *kernel {
+        return Err("sector 5 doesn't hold the start of the kernel");
+    }
+    disk.read(disk.sectors() - 1, &mut sector)?;
+    if disk.read(disk.sectors(), &mut sector).is_ok() {
+        return Err("the disk read a sector past its end");
     }
     Ok(())
 }

@@ -4,7 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::{calc, notes};
-use crate::{boot, frames, heap, keyboard, paging, rtc, selftest, speaker, timer, vga};
+use storage::{BlockDevice, SECTOR_SIZE};
+use crate::{ata, boot, frames, heap, keyboard, paging, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
@@ -216,6 +217,7 @@ fn run_command(
             println!("history      list the commands typed so far");
             println!("heap         show how much of the heap is used");
             println!("mem          list the memory the BIOS reports");
+            println!("disk         show the disk's model and size");
             println!("walk <addr>  show how the page tables map an address");
             println!("selftest     check that the kernel's parts still work");
             println!("vars         list the stored variables");
@@ -291,6 +293,13 @@ fn run_command(
             let free = frames::free_count();
             let (size, unit) = readable(free as u64 * frames::FRAME_SIZE);
             println!("{} {} free ({} frames)", size, unit, free);
+        },
+        "disk" => match ata::identify() {
+            Some(disk) => {
+                let (size, unit) = readable(disk.sectors() * SECTOR_SIZE as u64);
+                println!("{}: {} sectors ({} {})", disk.model(), disk.sectors(), size, unit);
+            },
+            None => println!("no ATA disk available on the primary channel"),
         },
         "walk" => {
             let word = words.next().unwrap_or("");
