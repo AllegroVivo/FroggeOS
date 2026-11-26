@@ -14,6 +14,8 @@ const PAGE_SIZE: usize = 4096;
 const LARGE_PAGE: u64 = 1 << 21;
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
+const WRITE_THROUGH: u64 = 1 << 3;
+const NO_CACHE: u64 = 1 << 4;
 const HUGE: u64 = 1 << 7;
 const ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 
@@ -113,14 +115,25 @@ pub fn translate(virt: u64) -> Option<u64> {
 
 // Maps the 4 KB page at `virt` to `frame`.
 pub fn map(virt: u64, frame: u64) -> Result<(), &'static str> {
+    map_with(virt, frame, WRITABLE)
+}
+
+// Maps a device's 4 KB page at it sown address with cache off.
+pub fn map_device(addr: u64) -> Result<(), &'static str> {
+    map_with(addr, addr, WRITABLE| WRITE_THROUGH | NO_CACHE)
+}
+
+// Maps the 4 KB page at `virt` to `frame`, using `flags`.
+fn map_with(virt: u64, frame: u64, flags: u64) -> Result<(), &'static str> {
     let entry = find_entry(virt, 3, true)?;
     if *entry & PRESENT != 0 {
-        return Err("the page is already mapped");
+        return Err("this page is already mapped");
     }
-    *entry = frame | PRESENT | WRITABLE;
+    *entry = frame | PRESENT | flags;
     flush(virt);
     Ok(())
 }
+
 
 // Unmaps the 4 KB page at `virt` and returns its frame.
 pub fn unmap(virt: u64) -> Option<u64> {

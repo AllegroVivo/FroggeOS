@@ -2,6 +2,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::arch::asm;
 use core::slice;
 use ribbit::calc;
 use crate::{boot, frames, heap, paging, rtc, shell, timer};
@@ -10,12 +11,13 @@ use crate::{print, println};
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 8] = [
+const CHECKS: [(&str, Check); 9] = [
     ("heap",    check_heap),
     ("frames",  check_frames),
     ("paging",  check_paging),
     ("spaces",  check_spaces),
     ("ram",     check_ram),
+    ("apic",    check_apic),
     ("timer",   check_timer),
     ("clock",   check_clock),
     ("Ribbit",  check_ribbit),
@@ -170,6 +172,35 @@ fn check_ram() -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+// Maps the local APIC's registers with map_device() and reads the version.
+fn check_apic() -> Result<(), &'static str> {
+    let msr = read_msr(0x1B);
+    if msr & (1 << 11) == 0 {
+        return Err("APIC is turned off");
+    }
+    let base = msr & !0xFFF;
+    paging::map_device(base)?;
+    let entry = paging::walk(base).last().map_or(0, |step| step.entry);
+    let version = unsafe { ((base + 0x30) as *const u32).read_volatile() };
+    paging::unmap(base);
+    if entry & 0x18 != 0x18 {
+        return Err("map_device() left the cache on");
+    }
+    if !(0x10..=0x15).contains(&(version & 0xFF)) {
+        return Err("APIC's version register reads wrong");
+    }
+    Ok(())
+}
+
+// Reads the model-specific register `msr`.
+fn read_msr(msr: u32) -> u64 {
+    let (low, high): (u32, u32);
+    unsafe {
+        asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high, options(nomem, nostack, preserves_flags));
+    }
+    (high as u64) << 32 | low as u64
 }
 
 // Sleeping 100ms should take 10-12 ticks.
