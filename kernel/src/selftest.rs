@@ -5,13 +5,14 @@ use alloc::vec::Vec;
 use core::arch::asm;
 use core::slice;
 use ribbit::calc;
+use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
 use crate::{boot, frames, heap, paging, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 10] = [
+const CHECKS: [(&str, Check); 11] = [
     ("heap",    check_heap),
     ("growth",  check_growth),
     ("frames",  check_frames),
@@ -22,6 +23,7 @@ const CHECKS: [(&str, Check); 10] = [
     ("timer",   check_timer),
     ("clock",   check_clock),
     ("Ribbit",  check_ribbit),
+    ("ramdisk", check_ramdisk),
 ];
 
 pub fn run() -> bool {
@@ -254,6 +256,25 @@ fn check_ribbit() -> Result<(), &'static str> {
     }
     if !matches!(run("F(0);"), Err(calc::Failure { error: calc::Error::TooDeep, .. })) {
         return Err("F(0) wasn't stopped as too deep");
+    }
+    Ok(())
+}
+
+fn check_ramdisk() -> Result<(), &'static str> {
+    const SECTORS: u64 = 64;
+    let mut disk = RamDisk::new(SECTORS);
+    for sector in 0..SECTORS {
+        disk.write(sector, &[sector as u8; SECTOR_SIZE])?;
+    }
+    let mut buffer = [0; SECTOR_SIZE];
+    for sector in 0..SECTORS {
+        disk.read(sector, &mut buffer)?;
+        if buffer != [sector as u8; SECTOR_SIZE] {
+            return Err("a RAM disk sector read back incorrectly");
+        }
+    }
+    if disk.sectors() != SECTORS || disk.read(SECTORS, &mut buffer).is_ok() {
+        return Err("the RAM disk is of an invalid size");
     }
     Ok(())
 }

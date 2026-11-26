@@ -15,6 +15,7 @@ panic = "abort"
 
 [dependencies]
 ribbit = { path = "../ribbit" }
+storage = { path = "../storage" }
 
 [features]
 selftest = []
