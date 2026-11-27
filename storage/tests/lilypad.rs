@@ -1,8 +1,8 @@
 use storage::lilypad::{
-    BITS_PER_BLOCK, BLOCK_SIZE, Bitmap, DIRECTORY, ENTRY_SIZE, Entry, MAGIC, Packer, Superblock, Time, VERSION,
-    format, valid_name,
+    BITS_PER_BLOCK, BLOCK_SIZE, Bitmap, DIRECTORY, ENTRY_SIZE, Entry, LilyPad, MAGIC, Packer, Superblock, Time,
+    VERSION, format, valid_name,
 };
-use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
+use storage::{BlockDevice, Partition, RamDisk, SECTOR_SIZE};
 
 const TIME: Time = Time { year: 2026, month: 11, day: 26, hour: 13, minute: 45, second: 7 };
 
@@ -325,4 +325,71 @@ fn a_full_lilypad_takes_no_more() {
     assert_eq!(disk.log, [Some(2), Some(3), Some(1), Some(0), None]);
     assert_eq!(read_block(&mut disk.disk, 3), [2; BLOCK_SIZE]);
     assert_eq!(read_block(&mut disk.disk, 1), [0xFF; BLOCK_SIZE]);
+}
+
+#[test]
+fn a_formatted_disk_mounts() {
+    let mut disk = RamDisk::new(100);
+    format(&mut disk, TIME).unwrap();
+    let mut lilypad = LilyPad::mount(disk).unwrap();
+    let expected = Superblock { blocks: 100, bitmap_start: 1, bitmap_blocks: 1, root: Entry::root(TIME) };
+    assert_eq!(*lilypad.superblock(), expected);
+    // Only the superblock and the bitmap are used.
+    assert_eq!(lilypad.used(), Ok(2));
+}
+
+#[test]
+fn lilypad_mounts_after_the_first_megabyte() {
+    // Like the boot disk: LilyPad starts at sector 2048.
+    let mut partition = Partition::new(RamDisk::new(2048 + 14_336), 2048);
+    format(&mut partition, TIME).unwrap();
+    let mut lilypad = LilyPad::mount(partition).unwrap();
+    assert_eq!((lilypad.superblock().blocks, lilypad.superblock().bitmap_blocks), (14_336, 4));
+    assert_eq!(lilypad.used(), Ok(5));
+}
+
+#[test]
+fn used_counts_what_the_bitmap_marks() {
+    // 5,000 blocks need 2 bitmap blocks, and 3,192 bits past the end are set.
+    let mut disk = RamDisk::new(5000);
+    let mut packer = Packer::new(&mut disk).unwrap();
+    packer.add(&[1; 3 * BLOCK_SIZE]).unwrap();
+    packer.finish(Entry::root(TIME)).unwrap();
+    let mut lilypad = LilyPad::mount(disk).unwrap();
+    // The superblock, 2 bitmap blocks and the 3-block file. The bits past the
+    // end don't count.
+    assert_eq!(lilypad.used(), Ok(6));
+    // In a full LilyPad, the last block counts too.
+    let mut disk = RamDisk::new(4);
+    let mut packer = Packer::new(&mut disk).unwrap();
+    packer.add(&[1; 2 * BLOCK_SIZE]).unwrap();
+    packer.finish(Entry::root(TIME)).unwrap();
+    assert_eq!(LilyPad::mount(disk).unwrap().used(), Ok(4));
+}
+
+#[test]
+fn only_a_superblock_that_fits_its_disk_mounts() {
+    // A disk of `sectors` sectors with `superblock` in sector 0, mounted.
+    let mount = |superblock: Superblock, sectors: u64| {
+        let mut disk = RamDisk::new(sectors);
+        disk.write(0, &superblock.to_bytes()).unwrap();
+        LilyPad::mount(disk).err()
+    };
+    let fits = Superblock { blocks: 100, bitmap_start: 1, bitmap_blocks: 1, root: Entry::root(TIME) };
+    assert_eq!(mount(fits, 100), None);
+    // A LilyPad may be smaller than its disk, but not bigger.
+    assert_eq!(mount(fits, 101), None);
+    assert_eq!(mount(fits, 99), Some("LilyPad is bigger than its assigned disk"));
+    assert_eq!(LilyPad::mount(RamDisk::new(100)).err(), Some("the disk isn't formatted with LilyPad"));
+    assert_eq!(LilyPad::mount(RamDisk::new(0)).err(), Some("the sector is past the end of the disk"));
+    // The bitmap must start at block 1 and have a bit for every block.
+    let misplaced = Some("the superblock's bitmap doesn't fit LilyPad");
+    assert_eq!(mount(Superblock { bitmap_start: 2, ..fits }, 100), misplaced);
+    assert_eq!(mount(Superblock { bitmap_blocks: 2, ..fits }, 100), misplaced);
+    assert_eq!(mount(Superblock { blocks: 4097, ..fits }, 5000), misplaced);
+    assert_eq!(mount(Superblock { blocks: 4097, bitmap_blocks: 2, ..fits }, 5000), None);
+    // One block holds the superblock, so the bitmap has no room.
+    assert_eq!(mount(Superblock { blocks: 1, ..fits }, 100), misplaced);
+    let file = Entry::new("root", 0, 0, 0, TIME).unwrap();
+    assert_eq!(mount(Superblock { root: file, ..fits }, 100), Some("the root isn't a directory"));
 }

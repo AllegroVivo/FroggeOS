@@ -6,6 +6,7 @@ extern crate alloc;
 mod ata;
 mod boot;
 mod frames;
+mod fs;
 mod gdt;
 mod heap;
 mod interrupts;
@@ -48,6 +49,8 @@ pub extern "C" fn _start(boot_info: &'static boot::BootInfo) -> ! {
 
     interrupts::enable();
     println!("Interrupts enabled.");
+
+    fs::mount();
 
     #[cfg(feature = "selftest")]
     selftest::exit_qemu(selftest::run());

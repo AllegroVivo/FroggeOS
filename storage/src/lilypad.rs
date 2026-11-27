@@ -188,6 +188,15 @@ impl Bitmap {
         }
         Ok(())
     }
+
+    // Reads a bitmap from `disk` for `blocks blocks, beginning at `start`.
+    pub fn read(disk: &mut dyn BlockDevice, start: u32, blocks: u32) -> Result<Bitmap, &'static str> {
+        let mut bitmap = Bitmap::new(blocks);
+        for (i, chunk) in bitmap.bytes.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+            disk.read(start as u64 + i as u64, chunk.try_into().unwrap())?;
+        }
+        Ok(bitmap)
+    }
 }
 
 // Builds a new LilyPad on all of a disk.
@@ -243,6 +252,44 @@ impl<'a> Packer<'a> {
 // Formats all of `disk` as an empty LilyPad.
 pub fn format(disk: &mut dyn BlockDevice, time: Time) -> Result<(), &'static str> {
     Packer::new(disk)?.finish(Entry::root(time))
+}
+
+// A LilyPad with validated structure.
+pub struct LilyPad<D: BlockDevice> {
+    disk: D,
+    superblock: Superblock
+}
+
+impl<D: BlockDevice> LilyPad<D> {
+    // Reads the superblock at `disk` and checks that it fits the disk.
+    pub fn mount(mut disk: D) -> Result<LilyPad<D>, &'static str> {
+        let mut block = [0; BLOCK_SIZE];
+        disk.read(0, &mut block)?;
+        let superblock = Superblock::from_bytes(&block)?;
+        let blocks = superblock.blocks;
+        if blocks as u64 > disk.sectors() {
+            return Err("LilyPad is bigger than its assigned disk");
+        }
+        let bitmap_blocks = blocks.div_ceil(BITS_PER_BLOCK);
+        if superblock.bitmap_start != 1 || superblock.bitmap_blocks != bitmap_blocks || blocks <= bitmap_blocks {
+            return Err("the superblock's bitmap doesn't fit LilyPad");
+        }
+        if !superblock.root.is_directory() {
+            return Err("the root isn't a directory");
+        }
+        Ok(LilyPad { disk, superblock })
+    }
+    
+    pub fn superblock(&self) -> &Superblock {
+        &self.superblock
+    }
+    
+    // How many blocks are used by the bitmap marks.
+    pub fn used(&mut self) -> Result<u32, &'static str> {
+        let blocks = self.superblock.blocks;
+        let bitmap = Bitmap::read(&mut self.disk, self.superblock.bitmap_start, blocks)?;
+        Ok((0..blocks).filter(|&block| bitmap.is_used(block)).count() as u32)
+    }
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> u32 {

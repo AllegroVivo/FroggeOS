@@ -59,3 +59,39 @@ impl BlockDevice for RamDisk {
         Ok(())
     }
 }
+
+// A chunk of disk sectors from `first` onward as a separate disk.
+pub struct Partition<D: BlockDevice> {
+    disk: D,
+    first: u64,
+}
+
+impl<D: BlockDevice> Partition<D> {
+    pub fn new(disk: D, first: u64) -> Partition<D> {
+        Partition { disk, first }
+    }
+}
+
+impl<D: BlockDevice> BlockDevice for Partition<D> {
+    fn sectors(&self) -> u64 {
+        self.disk.sectors().saturating_sub(self.first)
+    }
+
+    fn read(&mut self, sector: u64, buffer: &mut [u8; SECTOR_SIZE]) -> Result<(), &'static str> {
+        if sector >= self.sectors() {
+            return Err(PAST_END);
+        }
+        self.disk.read(self.first + sector, buffer)
+    }
+
+    fn write(&mut self, sector: u64, buffer: &[u8; SECTOR_SIZE]) -> Result<(), &'static str> {
+        if sector >= self.sectors() {
+            return Err(PAST_END);
+        }
+        self.disk.write(self.first + sector, buffer)
+    }
+
+    fn flush(&mut self) -> Result<(), &'static str> {
+        self.disk.flush()
+    }
+}

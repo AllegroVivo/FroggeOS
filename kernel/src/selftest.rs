@@ -7,13 +7,13 @@ use core::array;
 use core::slice;
 use ribbit::calc;
 use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
-use crate::{ata, boot, frames, heap, paging, rtc, shell, timer};
+use crate::{ata, boot, frames, fs, heap, paging, rtc, shell, timer};
 use crate::{print, println};
 
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 12] = [
+const CHECKS: [(&str, Check); 13] = [
     ("heap",    check_heap),
     ("growth",  check_growth),
     ("frames",  check_frames),
@@ -26,6 +26,7 @@ const CHECKS: [(&str, Check); 12] = [
     ("Ribbit",  check_ribbit),
     ("ramdisk", check_ramdisk),
     ("ata",     check_ata),
+    ("lilypad", check_lilypad),
 ];
 
 pub fn run() -> bool {
@@ -311,6 +312,19 @@ fn check_ata() -> Result<(), &'static str> {
     }
     if disk.write(last + 1, &pattern).is_ok() {
         return Err("the disk wrote a sector past its end");
+    }
+    Ok(())
+}
+
+fn check_lilypad() -> Result<(), &'static str> {
+    let mut mounted = fs::LILYPAD.lock();
+    let lilypad = mounted.as_mut().ok_or("LilyPad wasn't mounted at boot time")?;
+    let disk = ata::identify().ok_or("no ATA disk found")?;
+    if lilypad.superblock().blocks as u64 != disk.sectors() - fs::FIRST_SECTOR {
+        return Err("LilyPad doesn't fill the first from sector 2048 onward");
+    }
+    if lilypad.used()? <= lilypad.superblock().bitmap_blocks {
+        return Err("LilyPad's bitmap hasn't marked its own blocks as used");
     }
     Ok(())
 }
