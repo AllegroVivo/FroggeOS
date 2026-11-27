@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+pub mod lilypad;
+
 use alloc::vec;
 use alloc::vec::Vec;
 
