@@ -279,16 +279,61 @@ impl<D: BlockDevice> LilyPad<D> {
         }
         Ok(LilyPad { disk, superblock })
     }
-    
+
     pub fn superblock(&self) -> &Superblock {
         &self.superblock
     }
-    
+
     // How many blocks are used by the bitmap marks.
     pub fn used(&mut self) -> Result<u32, &'static str> {
         let blocks = self.superblock.blocks;
         let bitmap = Bitmap::read(&mut self.disk, self.superblock.bitmap_start, blocks)?;
         Ok((0..blocks).filter(|&block| bitmap.is_used(block)).count() as u32)
+    }
+
+    // Reads a whole file or directory.
+    pub fn read(&mut self, entry: &Entry) -> Result<Vec<u8>, &'static str> {
+        let blocks = entry.size.div_ceil(BLOCK_SIZE as u64);
+        let files_start = 1 + self.superblock.bitmap_blocks;
+        if blocks > 0 && (entry.first < files_start || entry.first as u64 + blocks > self.superblock.blocks as u64) {
+            return Err("the files blocks are outside the LilyPad-managed file structure");
+        }
+        let mut contents = vec![0; blocks as usize * BLOCK_SIZE];
+        for (i, chunk) in contents.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+            self.disk.read(entry.first as u64 + i as u64, chunk.try_into().unwrap())?;
+        }
+        contents.truncate(entry.size as usize);
+        Ok(contents)
+    }
+
+    // The files and other directories within `directory`.
+    pub fn list(&mut self, directory: &Entry) -> Result<Vec<Entry>, &'static str> {
+        if !directory.is_directory() {
+            return Err("not a directory");
+        }
+        let contents = self.read(directory)?;
+        Ok(contents.chunks_exact(ENTRY_SIZE).filter_map(|bytes| Entry::from_bytes(bytes.try_into().unwrap())).collect())
+    }
+
+    // Locates the file or directory at `path`.
+    pub fn find(&mut self, path: &str) -> Result<Entry, &'static str> {
+        let rest = path.strip_prefix('/').ok_or("a path must start with '/'")?;
+        let mut names = Vec::new();
+        for name in rest.split('/') {
+            match name {
+                "" | "." => {},
+                ".." => {
+                    names.pop();
+                },
+                _ => names.push(name),
+            }
+        }
+        let mut entry = self.superblock.root;
+        for name in names {
+            let children = self.list(&entry)?;
+            entry = children.into_iter().find(|child| child.is_named(name)).ok_or("no such file or directory")?;
+        }
+        Ok(entry)
     }
 }
 

@@ -393,3 +393,114 @@ fn only_a_superblock_that_fits_its_disk_mounts() {
     let file = Entry::new("root", 0, 0, 0, TIME).unwrap();
     assert_eq!(mount(Superblock { root: file, ..fits }, 100), Some("the root isn't a directory"));
 }
+
+// A LilyPad holding:
+//   /README.TXT       "Welcome!"
+//   /big.bin          1,500 bytes, over 3 blocks
+//   /docs/            two files, with a free entry between them
+//   /docs/hello.txt   "Hello from LilyPad!"
+//   /docs/empty.txt   nothing
+fn sample_lilypad() -> LilyPad<RamDisk> {
+    let mut disk = RamDisk::new(64);
+    let mut packer = Packer::new(&mut disk).unwrap();
+    let file = |name: &str, first: u32, size: usize| Entry::new(name, 0, first, size as u64, TIME).unwrap();
+    let readme = packer.add(b"Welcome!").unwrap();
+    let big = packer.add(&big_contents()).unwrap();
+    let hello = packer.add(b"Hello from LilyPad!").unwrap();
+    let mut docs = Vec::new();
+    docs.extend_from_slice(&file("hello.txt", hello, 19).to_bytes());
+    docs.extend_from_slice(&[0; ENTRY_SIZE]);
+    docs.extend_from_slice(&file("empty.txt", 0, 0).to_bytes());
+    let docs_first = packer.add(&docs).unwrap();
+    let mut top = Vec::new();
+    top.extend_from_slice(&file("README.TXT", readme, 8).to_bytes());
+    top.extend_from_slice(&file("big.bin", big, 1500).to_bytes());
+    top.extend_from_slice(&Entry::new("docs", DIRECTORY, docs_first, docs.len() as u64, TIME).unwrap().to_bytes());
+    let mut root = Entry::root(TIME);
+    root.first = packer.add(&top).unwrap();
+    root.size = top.len() as u64;
+    packer.finish(root).unwrap();
+    LilyPad::mount(disk).unwrap()
+}
+
+fn big_contents() -> Vec<u8> {
+    (0..1500).map(|i| (i % 251) as u8).collect()
+}
+
+fn names(entries: &[Entry]) -> Vec<&str> {
+    entries.iter().map(|entry| entry.name()).collect()
+}
+
+#[test]
+fn files_read_back_whole() {
+    let mut lilypad = sample_lilypad();
+    let readme = lilypad.find("/README.TXT").unwrap();
+    assert_eq!(lilypad.read(&readme), Ok(b"Welcome!".to_vec()));
+    // Its last block is cut at the file's size.
+    let big = lilypad.find("/big.bin").unwrap();
+    assert_eq!(lilypad.read(&big), Ok(big_contents()));
+    // An empty file has no blocks to read.
+    let empty = lilypad.find("/docs/empty.txt").unwrap();
+    assert_eq!(lilypad.read(&empty), Ok(Vec::new()));
+}
+
+#[test]
+fn entries_outside_lilypad_are_not_read() {
+    // 64 blocks: the superblock, the bitmap, then 62 for files.
+    let mut lilypad = sample_lilypad();
+    let file = |first: u32, size: u64| Entry::new("x", 0, first, size, TIME).unwrap();
+    let outside = Err("the files blocks are outside the LilyPad-managed file structure");
+    assert_eq!(lilypad.read(&file(0, 10)), outside);
+    assert_eq!(lilypad.read(&file(1, 10)), outside);
+    // Block 63 is the last one, so a 2-block file can't start there.
+    assert_eq!(lilypad.read(&file(63, 513)), outside);
+    assert_eq!(lilypad.read(&file(63, 512)), Ok(vec![0; 512]));
+    assert_eq!(lilypad.read(&file(2, 0)), Ok(Vec::new()));
+}
+
+#[test]
+fn directories_list_their_entries() {
+    let mut lilypad = sample_lilypad();
+    let root = lilypad.superblock().root;
+    assert_eq!(names(&lilypad.list(&root).unwrap()), ["README.TXT", "big.bin", "docs"]);
+    // The free entry between the two files is left out.
+    let docs = lilypad.find("/docs").unwrap();
+    assert_eq!(names(&lilypad.list(&docs).unwrap()), ["hello.txt", "empty.txt"]);
+    let readme = lilypad.find("/README.TXT").unwrap();
+    assert_eq!(lilypad.list(&readme), Err("not a directory"));
+}
+
+#[test]
+fn paths_find_files_and_directories() {
+    let mut lilypad = sample_lilypad();
+    let root = lilypad.superblock().root;
+    assert_eq!(lilypad.find("/"), Ok(root));
+    let hello = lilypad.find("/docs/hello.txt").unwrap();
+    assert_eq!((hello.name(), hello.size), ("hello.txt", 19));
+    assert!(lilypad.find("/docs").unwrap().is_directory());
+    // Names ignore case, and extra slashes don't count.
+    for path in ["/DOCS/Hello.TXT", "//docs//hello.txt", "/docs/hello.txt/"] {
+        assert_eq!(lilypad.find(path), Ok(hello), "{path}");
+    }
+    // `.` stays put and `..` goes up a level, worked out from the path
+    // alone, and `..` at the root stays there.
+    for path in ["/docs/./hello.txt", "/docs/../docs/hello.txt", "/../docs/hello.txt", "/docs/hello.txt/../hello.txt"] {
+        assert_eq!(lilypad.find(path), Ok(hello), "{path}");
+    }
+    assert_eq!(lilypad.find("/docs/.."), Ok(root));
+    assert_eq!(lilypad.find("/.."), Ok(root));
+}
+
+#[test]
+fn bad_paths_are_refused() {
+    let mut lilypad = sample_lilypad();
+    assert_eq!(lilypad.find("docs/hello.txt"), Err("a path must start with '/'"));
+    assert_eq!(lilypad.find(""), Err("a path must start with '/'"));
+    let missing = Err("no such file or directory");
+    assert_eq!(lilypad.find("/nothing"), missing);
+    assert_eq!(lilypad.find("/docs/nothing.txt"), missing);
+    assert_eq!(lilypad.find("/docs/hello"), missing);
+    // A path can't go on through a file.
+    assert_eq!(lilypad.find("/README.TXT/x"), Err("not a directory"));
+    assert_eq!(lilypad.find("/docs/hello.txt/more"), Err("not a directory"));
+}

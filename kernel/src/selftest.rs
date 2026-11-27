@@ -13,7 +13,7 @@ use crate::{print, println};
 // A check returns Ok or Err.
 type Check = fn() -> Result<(), &'static str>;
 
-const CHECKS: [(&str, Check); 13] = [
+const CHECKS: [(&str, Check); 14] = [
     ("heap",    check_heap),
     ("growth",  check_growth),
     ("frames",  check_frames),
@@ -27,6 +27,7 @@ const CHECKS: [(&str, Check); 13] = [
     ("ramdisk", check_ramdisk),
     ("ata",     check_ata),
     ("lilypad", check_lilypad),
+    ("lookup",  check_lookup),
 ];
 
 pub fn run() -> bool {
@@ -325,6 +326,28 @@ fn check_lilypad() -> Result<(), &'static str> {
     }
     if lilypad.used()? <= lilypad.superblock().bitmap_blocks {
         return Err("LilyPad's bitmap hasn't marked its own blocks as used");
+    }
+    Ok(())
+}
+
+fn check_lookup() -> Result<(), &'static str> {
+    let mut mounted = fs::LILYPAD.lock();
+    let lilypad = mounted.as_mut().ok_or("LilyPad wasn't mounted at boot time")?;
+    let root = lilypad.superblock().root;
+    if lilypad.find("/")? != root {
+        return Err("'/' didn't return the root directory");
+    }
+    for entry in lilypad.list(&root)? {
+        let path = String::from("/") + entry.name();
+        if lilypad.find(&path)? != entry {
+            return Err("an entry in / wasn't found by its name");
+        }
+        if lilypad.read(&entry)?.len() as u64 != entry.size {
+            return Err("and entry in '/' didn't read back whole");
+        }
+    }
+    if lilypad.find("/no such file").is_ok() {
+        return Err("a path that may not exist was found");
     }
     Ok(())
 }
