@@ -190,21 +190,59 @@ impl Bitmap {
     }
 }
 
-// Formats all of `disk ` as an empty LilyPad.
+// Builds a new LilyPad on all of a disk.
+pub struct Packer<'a> {
+    disk: &'a mut dyn BlockDevice,
+    blocks: u32,
+    bitmap: Bitmap,
+    next: u32       // the first block with no file yet
+}
+
+impl<'a> Packer<'a> {
+    pub fn new(disk: &'a mut dyn BlockDevice) -> Result<Packer<'a>, &'static str> {
+        let blocks = u32::try_from(disk.sectors()).map_err(|_| "the disk is too big for the LilyPad filesystem")?;
+        let mut bitmap = Bitmap::new(blocks);
+        let next = 1 + bitmap.blocks();
+        if next > blocks {
+            return Err("the disk is too small for the LilyPad filesystem");
+        }
+        for block in 0..next {
+            bitmap.mark_used(block);
+        }
+        Ok(Packer { disk, blocks, bitmap, next })
+    }
+
+    // Writes a file's contents to the next free block(s), returning the first.
+    pub fn add(&mut self, contents: &[u8]) -> Result<u32, &'static str> {
+        if contents.is_empty() {
+            return Ok(0);
+        }
+        if contents.len().div_ceil(BLOCK_SIZE) > (self.blocks - self.next) as usize {
+            return Err("LilyPad is full");
+        }
+        let first = self.next;
+        for chunk in contents.chunks(BLOCK_SIZE) {
+            let mut block = [0; BLOCK_SIZE];
+            block[..chunk.len()].copy_from_slice(chunk);
+            self.disk.write(self.next as u64, &block)?;
+            self.bitmap.mark_used(self.next);
+            self.next += 1;
+        }
+        Ok(first)
+    }
+
+    // Writes the bitmap, a superblock containing `root`, then flushes.
+    pub fn finish(self, root: Entry) -> Result<(), &'static str> {
+        let superblock = Superblock { blocks: self.blocks, bitmap_start: 1, bitmap_blocks: self.bitmap.blocks(), root };
+        self.bitmap.write(self.disk, superblock.bitmap_start)?;
+        self.disk.write(0, &superblock.to_bytes())?;
+        self.disk.flush()
+    }
+}
+
+// Formats all of `disk` as an empty LilyPad.
 pub fn format(disk: &mut dyn BlockDevice, time: Time) -> Result<(), &'static str> {
-    let blocks = u32::try_from(disk.sectors()).map_err(|_| "the disk is too big for LilyPad")?;
-    let mut bitmap = Bitmap::new(blocks);
-    let bitmap_blocks = bitmap.blocks();
-    if blocks <= bitmap_blocks {
-        return Err("the disk is too small for LilyPad");
-    }
-    for block in 0..=bitmap_blocks {
-        bitmap.mark_used(block);
-    }
-    let superblock = Superblock { blocks, bitmap_start: 1, bitmap_blocks, root: Entry::root(time) };
-    bitmap.write(disk, superblock.bitmap_start)?;
-    disk.write(0, &superblock.to_bytes())?;
-    disk.flush()
+    Packer::new(disk)?.finish(Entry::root(time))
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> u32 {

@@ -29,12 +29,15 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 $boot   = [System.IO.File]::ReadAllBytes("$PSScriptRoot\boot.bin")
 $stage2 = [System.IO.File]::ReadAllBytes("$PSScriptRoot\stage2.bin")
 
-# Lay everything out on a blank 1MB HD image.
-$image = New-Object byte[] (1024 * 1024)
+# Lay everything out on a blank 8MB HD image. (See FILESYSTEM.md)
+$image = New-Object byte[] (8 * 1024 * 1024)
 [Array]::Copy($boot,   0, $image, 0,        $boot.Length)   # sector 0
 [Array]::Copy($stage2, 0, $image, 512,      $stage2.Length) # sectors 1-4
 [Array]::Copy($kernel, 0, $image, 5 * 512,  $kernel.Length) # sectors 5+
 [System.IO.File]::WriteAllBytes("$PSScriptRoot\disk.img", $image)
+
+cargo run --quiet --manifest-path mkimage\Cargo.toml -- disk.img files
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
 if ($SelfTest) {
     qemu-system-x86_64 -drive file=disk.img,format=raw,if=ide -rtc base=localtime -m 4G -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04

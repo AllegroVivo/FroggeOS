@@ -294,18 +294,19 @@ fn check_ata() -> Result<(), &'static str> {
         return Err("sector 5 doesn't hold the start of the kernel");
     }
     let last = disk.sectors() - 1;
+    let test = 2047;
     let mut old = [0; SECTOR_SIZE];
-    disk.read(disk.sectors() - 1, &mut old)?;
+    disk.read(test, &mut old)?;
     if disk.read(disk.sectors(), &mut sector).is_ok() {
         return Err("the disk read a sector past its end");
     }
     let pattern: [u8; SECTOR_SIZE] = array::from_fn(|i| (i % 251) as u8);
     for data in [pattern, old] {
-        disk.write(last, &data)?;
+        disk.write(test, &data)?;
         disk.flush()?;
-        disk.read(last, &mut sector)?;
+        disk.read(test, &mut sector)?;
         if sector != data {
-            return Err("the last sector didn't read back what was written");
+            return Err("sector 2047 didn't read back what was written");
         }
     }
     if disk.write(last + 1, &pattern).is_ok() {

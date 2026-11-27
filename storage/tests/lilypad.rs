@@ -1,6 +1,6 @@
 use storage::lilypad::{
-    BITS_PER_BLOCK, BLOCK_SIZE, Bitmap, DIRECTORY, ENTRY_SIZE, Entry, MAGIC, Superblock, Time, VERSION, format,
-    valid_name,
+    BITS_PER_BLOCK, BLOCK_SIZE, Bitmap, DIRECTORY, ENTRY_SIZE, Entry, MAGIC, Packer, Superblock, Time, VERSION,
+    format, valid_name,
 };
 use storage::{BlockDevice, RamDisk, SECTOR_SIZE};
 
@@ -267,13 +267,62 @@ impl BlockDevice for Huge {
 
 #[test]
 fn format_needs_a_disk_of_the_right_size() {
-    assert_eq!(format(&mut Huge, TIME), Err("the disk is too big for LilyPad"));
+    assert_eq!(format(&mut Huge, TIME), Err("the disk is too big for the LilyPad filesystem"));
     for sectors in [0, 1] {
-        assert_eq!(format(&mut RamDisk::new(sectors), TIME), Err("the disk is too small for LilyPad"));
+        assert_eq!(format(&mut RamDisk::new(sectors), TIME), Err("the disk is too small for the LilyPad filesystem"));
     }
     // Two blocks hold the superblock and the bitmap, with no room for files.
     let mut disk = RamDisk::new(2);
     format(&mut disk, TIME).unwrap();
     assert_eq!(Superblock::from_bytes(&read_block(&mut disk, 0)).unwrap().bitmap_blocks, 1);
     assert_eq!(read_block(&mut disk, 1), [0xFF; BLOCK_SIZE]);
+}
+
+#[test]
+fn packed_files_follow_one_another() {
+    let mut disk = RamDisk::new(64);
+    let mut packer = Packer::new(&mut disk).unwrap();
+    // Block 0 is the superblock and block 1 the bitmap, so files start at 2.
+    assert_eq!(packer.add(b"hello"), Ok(2));
+    let long: Vec<u8> = (0..600).map(|i| i as u8).collect();
+    assert_eq!(packer.add(&long), Ok(3));
+    // An empty file has no blocks.
+    assert_eq!(packer.add(b""), Ok(0));
+    assert_eq!(packer.add(&[7; BLOCK_SIZE]), Ok(5));
+    let mut root = Entry::root(TIME);
+    root.first = 5;
+    root.size = BLOCK_SIZE as u64;
+    packer.finish(root).unwrap();
+    let expected = Superblock { blocks: 64, bitmap_start: 1, bitmap_blocks: 1, root };
+    assert_eq!(Superblock::from_bytes(&read_block(&mut disk, 0)), Ok(expected));
+    // The rest of a file's last block is zeros.
+    let hello = read_block(&mut disk, 2);
+    assert_eq!((&hello[..5], &hello[5..]), (&b"hello"[..], &[0; 507][..]));
+    assert_eq!(read_block(&mut disk, 3)[..], long[..512]);
+    let end = read_block(&mut disk, 4);
+    assert_eq!((&end[..88], &end[88..]), (&long[512..], &[0; 424][..]));
+    assert_eq!(read_block(&mut disk, 5), [7; BLOCK_SIZE]);
+    assert_eq!(read_block(&mut disk, 6), [0; BLOCK_SIZE]);
+    // Blocks 0 to 5 are used, and those from 64 on are past the end.
+    let bitmap = read_block(&mut disk, 1);
+    assert_eq!(bitmap[..8], [0b0011_1111, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(bitmap[8..], [0xFF; 504]);
+}
+
+#[test]
+fn a_full_lilypad_takes_no_more() {
+    // 4 blocks: the superblock, the bitmap and room for 2 blocks of files.
+    let mut disk = Logged { disk: RamDisk::new(4), log: Vec::new() };
+    let mut packer = Packer::new(&mut disk).unwrap();
+    // A file a byte too big is refused before any of it is written.
+    assert_eq!(packer.add(&[1; 2 * BLOCK_SIZE + 1]), Err("LilyPad is full"));
+    assert_eq!(packer.add(&[2; 2 * BLOCK_SIZE]), Ok(2));
+    assert_eq!(packer.add(&[3]), Err("LilyPad is full"));
+    // An empty file still fits.
+    assert_eq!(packer.add(b""), Ok(0));
+    packer.finish(Entry::root(TIME)).unwrap();
+    // The files go first, then the bitmap and the superblock.
+    assert_eq!(disk.log, [Some(2), Some(3), Some(1), Some(0), None]);
+    assert_eq!(read_block(&mut disk.disk, 3), [2; BLOCK_SIZE]);
+    assert_eq!(read_block(&mut disk.disk, 1), [0xFF; BLOCK_SIZE]);
 }

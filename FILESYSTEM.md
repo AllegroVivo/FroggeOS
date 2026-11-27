@@ -1,6 +1,6 @@
 # LilyPad: the FroggeOS filesystem
 
-**Status (2026-11-26):** designed (roadmap ⚑ 5.1 and 5.2.1), not built yet. ROADMAP.md tracks what's built.
+**Status (2026-11-27):** designed (roadmap ⚑ 5.1 and 5.2.1). `storage` and `mkimage` write it, and the kernel can't read it yet. ROADMAP.md tracks what's built.
 
 **In one line:** a disk in fixed areas, and LilyPad, a small filesystem of our own in the spirit of TempleOS's RedSea: 512-byte blocks, a bitmap of free blocks, directories of 64-byte entries, and every file in one unbroken run of blocks.
 
