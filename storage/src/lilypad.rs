@@ -1,5 +1,6 @@
 // Custom filesystem for FroggeOS. (See FILESYSTEM.md)
 
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -317,6 +318,10 @@ impl<D: BlockDevice> LilyPad<D> {
 
     // Locates the file or directory at `path`.
     pub fn find(&mut self, path: &str) -> Result<Entry, &'static str> {
+        Ok(self.resolve(path)?.1)
+    }
+
+    pub fn resolve(&mut self, path: &str) -> Result<(String, Entry), &'static str> {
         let rest = path.strip_prefix('/').ok_or("a path must start with '/'")?;
         let mut names = Vec::new();
         for name in rest.split('/') {
@@ -329,12 +334,31 @@ impl<D: BlockDevice> LilyPad<D> {
             }
         }
         let mut entry = self.superblock.root;
+        let mut spelled = String::new();
         for name in names {
             let children = self.list(&entry)?;
             entry = children.into_iter().find(|child| child.is_named(name)).ok_or("no such file or directory")?;
+            spelled.push('/');
+            spelled.push_str(entry.name());
         }
-        Ok(entry)
+        if spelled.is_empty() {
+            spelled.push('/');
+        }
+        Ok((spelled, entry))
     }
+}
+
+// `path` as a path from the root.
+pub fn join(directory: &str, path: &str) -> String {
+    if path.starts_with('/') {
+        return String::from(path);
+    }
+    let mut joined = String::from(directory);
+    if !joined.ends_with('/') {
+        joined.push('/');
+    }
+    joined.push_str(path);
+    joined
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> u32 {

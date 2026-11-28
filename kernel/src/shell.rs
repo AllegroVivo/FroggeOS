@@ -1,16 +1,17 @@
 // A command prompt.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use ribbit::{calc, notes};
 use storage::{BlockDevice, SECTOR_SIZE};
-use crate::{ata, boot, frames, heap, keyboard, paging, rtc, selftest, speaker, timer, vga};
+use crate::{ata, boot, frames, fs, heap, keyboard, paging, rtc, selftest, speaker, timer, vga};
 use crate::keyboard::Key;
 use crate::{print, println};
 
-// ``> `` + 78 characters fills an 80-character row.
 const MAX_LINE: usize = 78;
+const PROMPT_MAX: usize = 40;
 
 pub fn run(boot_info: &boot::BootInfo) -> ! {
     println!("FroggeOS shell. Type 'help' for a list of commands.");
@@ -24,7 +25,8 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
     let mut draft = String::new();
     let mut vars = calc::Variables::new();
     let mut functions = calc::Functions::new();
-    print!("> ");
+    let mut cwd = String::from("/");
+    let mut max = show_prompt(&cwd);
 
     loop {
         match wait_for_key() {
@@ -47,15 +49,16 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
                     pending.push_str(text);
                     if !calc::is_complete(&pending) {
                         print!(". ");
+                        max = MAX_LINE;
                         continue;
                     }
                 }
                 if !pending.is_empty() {
                     history.push(pending.clone());
-                    run_command(&pending, &history, &mut vars, &mut functions, boot_info);
+                    run_command(&pending, &history, &mut vars, &mut functions, boot_info, &mut cwd);
                     pending.clear();
                 }
-                print!("> ");
+                max = show_prompt(&cwd);
             },
             Key::Char('\x08') => {
                 if pos > 0 {
@@ -67,7 +70,7 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
                 }
             },
             Key::Char(c) => {
-                if len < MAX_LINE {
+                if len < max {
                     line.copy_within(pos..len, pos + 1);
                     line[pos] = c as u8;
                     len += 1;
@@ -104,7 +107,7 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
                 pos = len;
             },
             Key::Up => {
-                if let Some(entry) = recall(&history, back + 1) {
+                if let Some(entry) = recall(&history, back + 1, max) {
                     if back == 0 {
                         draft = String::from(core::str::from_utf8(&line[..len]).unwrap());
                     }
@@ -115,7 +118,7 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
             }
             Key::Down if back > 0 => {
                 back -= 1;
-                let text = if back == 0 { &draft } else { recall(&history, back).unwrap() };
+                let text = if back == 0 { &draft } else { recall(&history, back, max).unwrap() };
                 len = replace_line(&mut line, pos, len, text);
                 pos = len;
             },
@@ -125,7 +128,7 @@ pub fn run(boot_info: &boot::BootInfo) -> ! {
                 pos = 0;
                 back = 0;
                 pending.clear();
-                print!("> ");
+                max = show_prompt(&cwd);
             },
             _ => {}
         }
@@ -141,8 +144,22 @@ fn wait_for_key() -> Key {
     }
 }
 
-fn recall(history: &[String], back: usize) -> Option<&String> {
-    history.iter().rev().filter(|entry| !entry.contains('\n')).nth(back - 1)
+fn recall(history: &[String], back: usize, max: usize) -> Option<&String> {
+    history.iter().rev().filter(|entry| !entry.contains('\n') && entry.len() <= max).nth(back - 1)
+}
+
+fn prompt(cwd: &str) -> String {
+    if cwd.len() + 2 <= PROMPT_MAX {
+        format!("{}> ", cwd)
+    } else {
+        format!("...{}> ", &cwd[cwd.len() + 5 - PROMPT_MAX..])
+    }
+}
+
+fn show_prompt(cwd: &str) -> usize {
+    let prompt = prompt(cwd);
+    print!("{}", prompt);
+    MAX_LINE + 2 - prompt.len()
 }
 
 fn replace_line(line: &mut [u8], pos: usize, len: usize, text: &str) -> usize {
@@ -198,7 +215,8 @@ fn run_command(
     history: &[String],
     vars: &mut calc::Variables,
     functions: &mut calc::Functions,
-    boot_info: &boot::BootInfo
+    boot_info: &boot::BootInfo,
+    cwd: &mut String
 ) {
     let mut words = line.split_whitespace();
     let Some(command) = words.next() else {
@@ -218,6 +236,10 @@ fn run_command(
             println!("heap         show how much of the heap is used");
             println!("mem          list the memory the BIOS reports");
             println!("disk         show the disk's model and size");
+            println!("ls [path]    list a directory, or show a file's size and date");
+            println!("cat <file>   print a file");
+            println!("cd [dir]     change the current directory (/ if none is given)");
+            println!("pwd          print the current directory");
             println!("walk <addr>  show how the page tables map an address");
             println!("selftest     check that the kernel's parts still work");
             println!("vars         list the stored variables");
@@ -301,6 +323,13 @@ fn run_command(
             },
             None => println!("no ATA disk available on the primary channel"),
         },
+        "ls" => report("ls", fs::ls(cwd, words.next().unwrap_or("."))),
+        "cat" => match words.next() {
+            Some(path) => report("cat", fs::cat(cwd, path)),
+            None => println!("usage: cat <file>"),
+        },
+        "cd" => report("cd", fs::cd(cwd, words.next().unwrap_or("/"))),
+        "pwd" => println!("{}", cwd),
         "walk" => {
             let word = words.next().unwrap_or("");
             let digits = word.strip_prefix("0x").unwrap_or(word);
@@ -340,7 +369,7 @@ fn run_command(
                 Ok(Some(value)) => println!("{}", value),
                 Ok(None) => {},
                 Err(failure) => match failure.at {
-                    Some(at) => mark(line, at, &failure.error, kernel.printed),
+                    Some(at) => mark(line, at, &failure.error, kernel.printed, prompt(cwd).len()),
                     None => println!("Error: {}", failure.error),
                 }
             }
@@ -386,13 +415,21 @@ fn _language_breakdown() {
     println!("Multi-line: an open {{ continues on '. ' lines, and a blank line runs it");
 }
 
+// Prints the error a command ended with if it had one.
+fn report(command: &str, result: Result<(), &str>) {
+    if let Err(error) = result {
+        println!("{}: {}", command, error);
+    }
+}
+
 // Displays a mistake found during processing.
-fn mark(code: &str, at: usize, error: &calc::Error, printed: bool) {
+fn mark(code: &str, at: usize, error: &calc::Error, printed: bool, prompt: usize) {
     let start = code [..at].rfind('\n').map_or(0, |i| i + 1);
     let end = code[at..].find('\n').map_or(code.len(), |i| at + i);
     let width = (at - start + 3).min(MAX_LINE + 2);
     if end == code.len() && !printed {
-        println!("{:>width$}", "^");
+        let indent = if start == 0 { prompt } else { 2 };
+        println!("{:>width$}", "^", width = (at - start + indent + 1).min(MAX_LINE+ 2));
         println!("Error: {}", error);
     } else {
         println!("  {}", &code[start..end]);

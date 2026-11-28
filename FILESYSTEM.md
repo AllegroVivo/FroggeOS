@@ -1,6 +1,6 @@
 # LilyPad: the FroggeOS filesystem
 
-**Status (2026-11-27):** designed (roadmap ⚑ 5.1 and 5.2.1). `storage` and `mkimage` write it, and the kernel mounts it at boot and can find and read its files, though the shell has no commands for them yet. ROADMAP.md tracks what's built.
+**Status (2026-11-28):** designed (roadmap ⚑ 5.1 and 5.2.1). `storage` and `mkimage` write it, the kernel mounts it at boot, and the shell's `ls`, `cat`, `cd` and `pwd` read it. ROADMAP.md tracks what's built.
 
 **In one line:** a disk in fixed areas, and LilyPad, a small filesystem of our own in the spirit of TempleOS's RedSea: 512-byte blocks, a bitmap of free blocks, directories of 64-byte entries, and every file in one unbroken run of blocks.
 
@@ -68,7 +68,7 @@ Names:
 
 - **A file is one unbroken run of blocks,** from its first block to first + ⌈size / 512⌉ − 1. The rest of its last block is zeros, and an empty file has no blocks.
 - **A directory is a file of entries,** so its size is a multiple of 64. The root's entry lives in the superblock, and every other directory's lives in its parent.
-- **A path** is names joined by `/`, starting from the root: `/docs/hello.txt`.
+- **A path** is names joined by `/`, starting from the root: `/docs/hello.txt`. In the shell, a path without the leading `/` starts from the current directory: in `/docs`, `hello.txt` is `/docs/hello.txt`.
 - **A file that changes length** is written to a new run, and its old run is freed. So reading and writing whole files at a time (⚑ 5.6) suits LilyPad best.
 - **Times** are local time from the CMOS clock, as `date` shows them. `mkimage` takes them from the Windows files it packs.
 

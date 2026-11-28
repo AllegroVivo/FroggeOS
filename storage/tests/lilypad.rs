@@ -1,6 +1,6 @@
 use storage::lilypad::{
     BITS_PER_BLOCK, BLOCK_SIZE, Bitmap, DIRECTORY, ENTRY_SIZE, Entry, LilyPad, MAGIC, Packer, Superblock, Time,
-    VERSION, format, valid_name,
+    VERSION, format, join, valid_name,
 };
 use storage::{BlockDevice, Partition, RamDisk, SECTOR_SIZE};
 
@@ -503,4 +503,35 @@ fn bad_paths_are_refused() {
     // A path can't go on through a file.
     assert_eq!(lilypad.find("/README.TXT/x"), Err("not a directory"));
     assert_eq!(lilypad.find("/docs/hello.txt/more"), Err("not a directory"));
+}
+
+#[test]
+fn relative_paths_start_from_a_directory() {
+    assert_eq!(join("/", "docs"), "/docs");
+    assert_eq!(join("/docs", "hello.txt"), "/docs/hello.txt");
+    assert_eq!(join("/docs", "../README.TXT"), "/docs/../README.TXT");
+    // A path from the root stays as it is.
+    assert_eq!(join("/docs", "/big.bin"), "/big.bin");
+    let mut lilypad = sample_lilypad();
+    let root = lilypad.superblock().root;
+    assert_eq!(lilypad.find(&join("/docs", "..")), Ok(root));
+    assert_eq!(lilypad.find(&join("/docs", ".")), lilypad.find("/docs"));
+}
+
+#[test]
+fn resolve_spells_paths_the_way_lilypad_does() {
+    let mut lilypad = sample_lilypad();
+    let mut spelled = |path: &str| lilypad.resolve(path).map(|(spelled, _)| spelled);
+    assert_eq!(spelled("/"), Ok(String::from("/")));
+    // Names in the case they're stored in, with no `.`, `..` or extra slashes.
+    assert_eq!(spelled("/DOCS/HELLO.TXT"), Ok(String::from("/docs/hello.txt")));
+    assert_eq!(spelled("//docs/./../readme.txt"), Ok(String::from("/README.TXT")));
+    assert_eq!(spelled("/docs/.."), Ok(String::from("/")));
+    assert_eq!(spelled("/docs/"), Ok(String::from("/docs")));
+    // resolve() finds the same entries as find(), and refuses the same paths.
+    let (_, hello) = lilypad.resolve("/docs/hello.txt").unwrap();
+    assert_eq!(lilypad.find("/docs/HELLO.txt"), Ok(hello));
+    assert_eq!(lilypad.resolve("docs"), Err("a path must start with '/'"));
+    assert_eq!(lilypad.resolve("/nothing"), Err("no such file or directory"));
+    assert_eq!(lilypad.resolve("/README.TXT/x"), Err("not a directory"));
 }
