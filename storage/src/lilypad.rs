@@ -182,6 +182,26 @@ impl Bitmap {
         self.bytes[block as usize / 8] |= 1 << (block % 8);
     }
 
+    pub fn mark_free(&mut self, block: u32) {
+        self.bytes[block as usize / 8] &= !(1 << (block % 8));
+    }
+
+    // Locates the first run of `count` free blocks in `start..end`, if any.
+    pub fn find_free(&self, count: u32, start: u32, end: u32) -> Option<u32> {
+        let mut run = 0;
+        for block in start..end {
+            if self.is_used(block) {
+                run = 0;
+            } else {
+                run += 1;
+                if run == count {
+                    return Some(block + 1 - count);
+                }
+            }
+        }
+        None
+    }
+
     // Writes the bitmap to `disk`, starting at block `start`.
     pub fn write(&self, disk: &mut dyn BlockDevice, start: u32) -> Result<(), &'static str> {
         for (i, chunk) in self.bytes.chunks_exact(BLOCK_SIZE).enumerate() {
@@ -290,6 +310,42 @@ impl<D: BlockDevice> LilyPad<D> {
         let blocks = self.superblock.blocks;
         let bitmap = Bitmap::read(&mut self.disk, self.superblock.bitmap_start, blocks)?;
         Ok((0..blocks).filter(|&block| bitmap.is_used(block)).count() as u32)
+    }
+
+    // Locates and marks used `count` free blocks in a row, returning the first.
+    pub fn allocate(&mut self, count: u32) -> Result<u32, &'static str> {
+        if count == 0 {
+            return Ok(0);
+        }
+        let start = self.superblock.bitmap_start;
+        let mut bitmap = Bitmap::read(&mut self.disk, start, self.superblock.blocks)?;
+        let files_start = 1 + self.superblock.bitmap_blocks;
+        let first = bitmap.find_free(count, files_start, self.superblock.blocks).ok_or("LilyPad has no free run of that length")?;
+        for block in first..first + count {
+            bitmap.mark_used(block);
+        }
+        bitmap.write(&mut self.disk, start)?;
+        Ok(first)
+    }
+
+    // Locates and marks `count` blocks from `first` as freed.
+    pub fn free(&mut self, first: u32, count: u32) -> Result<(), &'static str> {
+        if count == 0 {
+            return Ok(());
+        }
+        let files_start = 1 + self.superblock.bitmap_blocks;
+        if first < files_start || first as u64 + count as u64 > self.superblock.blocks as u64 {
+            return Err("the blocks to free are outside the LilyPad block");
+        }
+        let start = self.superblock.bitmap_start;
+        let mut bitmap = Bitmap::read(&mut self.disk, start, self.superblock.blocks)?;
+        for block in first..first + count {
+            if !bitmap.is_used(block) {
+                return Err("a block to free has already been freed.");
+            }
+            bitmap.mark_free(block);
+        }
+        bitmap.write(&mut self.disk, start)
     }
 
     // Reads a whole file or directory.

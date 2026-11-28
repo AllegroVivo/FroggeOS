@@ -184,6 +184,43 @@ fn bits_go_lowest_first() {
 }
 
 #[test]
+fn the_first_free_run_that_fits_is_found() {
+    let mut bitmap = Bitmap::new(64);
+    // Blocks 0-4, 7 and 10-11 are used, which leaves free runs of 2 blocks
+    // (5-6), 2 blocks (8-9) and 52 blocks (12-63).
+    for block in [0, 1, 2, 3, 4, 7, 10, 11] {
+        bitmap.mark_used(block);
+    }
+    assert_eq!(bitmap.find_free(1, 0, 64), Some(5));
+    assert_eq!(bitmap.find_free(2, 0, 64), Some(5));
+    // A used block ends a run, so 3 blocks only fit after block 11.
+    assert_eq!(bitmap.find_free(3, 0, 64), Some(12));
+    assert_eq!(bitmap.find_free(52, 0, 64), Some(12));
+    assert_eq!(bitmap.find_free(53, 0, 64), None);
+    // Only start..end is searched, and a run may end right at end.
+    assert_eq!(bitmap.find_free(2, 6, 64), Some(8));
+    assert_eq!(bitmap.find_free(2, 6, 10), Some(8));
+    assert_eq!(bitmap.find_free(2, 6, 9), None);
+    assert_eq!(bitmap.find_free(1, 0, 5), None);
+}
+
+#[test]
+fn freeing_a_block_clears_only_its_bit() {
+    let mut bitmap = Bitmap::new(4096);
+    for block in 0..4096 {
+        bitmap.mark_used(block);
+    }
+    bitmap.mark_free(9);
+    bitmap.mark_free(4095);
+    assert!(!bitmap.is_used(9) && bitmap.is_used(8) && bitmap.is_used(10));
+    assert!(!bitmap.is_used(4095) && bitmap.is_used(4094));
+    // A free block stays free.
+    bitmap.mark_free(9);
+    assert!(!bitmap.is_used(9));
+    assert_eq!((0..4096).filter(|&block| !bitmap.is_used(block)).count(), 2);
+}
+
+#[test]
 fn format_writes_an_empty_lilypad() {
     let mut disk = RamDisk::new(14_336);
     let marker = [0xAB; BLOCK_SIZE];
@@ -534,4 +571,91 @@ fn resolve_spells_paths_the_way_lilypad_does() {
     assert_eq!(lilypad.resolve("docs"), Err("a path must start with '/'"));
     assert_eq!(lilypad.resolve("/nothing"), Err("no such file or directory"));
     assert_eq!(lilypad.resolve("/README.TXT/x"), Err("not a directory"));
+}
+
+#[test]
+fn allocated_runs_come_from_the_free_blocks() {
+    // The sample uses blocks 0 to 8: the superblock, the bitmap, then files.
+    let mut lilypad = sample_lilypad();
+    assert_eq!(lilypad.used(), Ok(9));
+    assert_eq!(lilypad.allocate(3), Ok(9));
+    assert_eq!(lilypad.allocate(1), Ok(12));
+    assert_eq!(lilypad.used(), Ok(13));
+    // An empty file has no blocks.
+    assert_eq!(lilypad.allocate(0), Ok(0));
+    assert_eq!(lilypad.used(), Ok(13));
+    // Blocks 13 to 63 are the last 51 free ones.
+    let full = Err("LilyPad has no free run of that length");
+    assert_eq!(lilypad.allocate(52), full);
+    assert_eq!(lilypad.allocate(51), Ok(13));
+    assert_eq!(lilypad.used(), Ok(64));
+    assert_eq!(lilypad.allocate(1), full);
+}
+
+#[test]
+fn freed_blocks_are_handed_out_again() {
+    let mut lilypad = sample_lilypad();
+    assert_eq!(lilypad.allocate(2), Ok(9));
+    assert_eq!(lilypad.allocate(3), Ok(11));
+    assert_eq!(lilypad.free(9, 2), Ok(()));
+    assert_eq!(lilypad.used(), Ok(12));
+    // First fit: 3 blocks don't fit in 9-10, so they go after 13, but 2 do.
+    assert_eq!(lilypad.allocate(3), Ok(14));
+    assert_eq!(lilypad.allocate(2), Ok(9));
+    // Freeing big.bin's 3 blocks (3 to 5) makes room there.
+    let big = lilypad.find("/big.bin").unwrap();
+    assert_eq!(lilypad.free(big.first, 3), Ok(()));
+    assert_eq!(lilypad.allocate(3), Ok(3));
+    // An empty file has nothing to free.
+    assert_eq!(lilypad.free(0, 0), Ok(()));
+}
+
+#[test]
+fn only_used_blocks_among_the_files_are_freed() {
+    // 64 blocks: the superblock, the bitmap, then 62 for files.
+    let mut lilypad = sample_lilypad();
+    let outside = Err("the blocks to free are outside the LilyPad block");
+    assert_eq!(lilypad.free(0, 1), outside);
+    assert_eq!(lilypad.free(1, 1), outside);
+    assert_eq!(lilypad.free(63, 2), outside);
+    assert_eq!(lilypad.free(u32::MAX, 2), outside);
+    assert_eq!(lilypad.used(), Ok(9));
+    // A run with a free block in it is refused whole.
+    assert_eq!(lilypad.allocate(3), Ok(9));
+    assert_eq!(lilypad.free(10, 1), Ok(()));
+    let already = Err("a block to free has already been freed.");
+    assert_eq!(lilypad.free(9, 3), already);
+    assert_eq!(lilypad.used(), Ok(11));
+    assert_eq!(lilypad.free(10, 1), already);
+}
+
+#[test]
+fn allocate_keeps_to_the_files_whatever_the_bitmap_says() {
+    // A broken bitmap that marks no block used: not the superblock, not the
+    // bitmap itself, and none of the bits past the end.
+    let mut disk = RamDisk::new(64);
+    format(&mut disk, TIME).unwrap();
+    disk.write(1, &[0; BLOCK_SIZE]).unwrap();
+    let mut lilypad = LilyPad::mount(disk).unwrap();
+    assert_eq!(lilypad.used(), Ok(0));
+    assert_eq!(lilypad.allocate(1), Ok(2));
+    // Blocks 3 to 63 are all that's left.
+    assert_eq!(lilypad.allocate(62), Err("LilyPad has no free run of that length"));
+    assert_eq!(lilypad.allocate(61), Ok(3));
+}
+
+#[test]
+fn runs_can_cross_from_one_bitmap_block_to_the_next() {
+    // Like the boot disk: 14,336 blocks after the first megabyte and a
+    // 4-block bitmap, so files start at block 5. Block 4096 is the first one
+    // whose bit is in the bitmap's second block.
+    let mut partition = Partition::new(RamDisk::new(2048 + 14_336), 2048);
+    format(&mut partition, TIME).unwrap();
+    let mut lilypad = LilyPad::mount(partition).unwrap();
+    assert_eq!(lilypad.allocate(4090), Ok(5));
+    assert_eq!(lilypad.allocate(3), Ok(4095));
+    assert_eq!(lilypad.used(), Ok(5 + 4090 + 3));
+    assert_eq!(lilypad.free(4094, 3), Ok(()));
+    assert_eq!(lilypad.used(), Ok(5 + 4089 + 1));
+    assert_eq!(lilypad.allocate(3), Ok(4094));
 }

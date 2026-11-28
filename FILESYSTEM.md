@@ -70,6 +70,7 @@ Names:
 - **A directory is a file of entries,** so its size is a multiple of 64. The root's entry lives in the superblock, and every other directory's lives in its parent.
 - **A path** is names joined by `/`, starting from the root: `/docs/hello.txt`. In the shell, a path without the leading `/` starts from the current directory: in `/docs`, `hello.txt` is `/docs/hello.txt`.
 - **A file that changes length** is written to a new run, and its old run is freed. So reading and writing whole files at a time (⚑ 5.6) suits LilyPad best.
+- **A new run** is the first free run that's long enough (first fit), looking only from the block after the bitmap to LilyPad's end.
 - **Times** are local time from the CMOS clock, as `date` shows them. `mkimage` takes them from the Windows files it packs.
 
 ## 7. Limits
